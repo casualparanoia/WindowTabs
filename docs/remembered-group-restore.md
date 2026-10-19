@@ -1,12 +1,14 @@
 # Fork switch: automatic remembered-group restoration
 
 The fork defaults to **no automatic restoration** of previous manual groups.
-This is an internal policy switch, not a setting and not an app Auto-group rule.
+The policy is a persisted setting, distinct from per-app Auto-group and explicit app rules.
 
-Change `Program.RememberedGroupRestore.enabled` in
-`WtProgram/Program.fs` from `false` to `true` to regain the upstream
-default. `Program.Program(...,restoreRememberedGroups=true)` is also available
-for tests, and is used by the upstream `StartupGrouping` regression.
+Use **Settings → General → Startup → Restore remembered groups** to re-enable the upstream behavior.
+The setting is stored as `restoreRememberedGroups` in `WindowTabsSettings.json`, defaulting
+to `false` even for existing installations that have no key. It applies to future
+window discovery, not to windows that have already been placed in groups.
+The constructor override `Program.Program(...,restoreRememberedGroups=true)` is retained
+for tests; `StartupGrouping` uses it to exercise upstream restoration.
 
 With the switch disabled:
 
@@ -22,7 +24,9 @@ With the switch disabled:
   ordinary editing/removal/expiry logic. This is a *restore-only* policy, not
   a freeze of persistent history.
 
-The no-restore regression also verifies that previously stored tokens and
+The no-restore regression also verifies that the setting can be turned on and off
+while the program is running for new saved-token lookups, without disturbing an
+already manually edited group. It also verifies that previously stored tokens and
 title records do not recombine fixture windows, that a delayed title change
 does not recombine them, and that the group can still be joined manually.
 
