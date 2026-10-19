@@ -28,7 +28,14 @@ type ProgramInput =
     | WinEvent of (IntPtr * WinEvent)
     | ShellEvent of (IntPtr * ShellEvent)
 
-type Program(lifetime:LifetimeScope, ?settings:Settings) as this =
+/// Fork-only switch. Disable automatic restoration, not recording or explicit grouping.
+/// Switch this to true to recover upstream's normal startup behaviour.
+module RememberedGroupRestore =
+    [<Literal>]
+    let enabled = false
+
+type Program(lifetime:LifetimeScope, ?settings:Settings, ?restoreRememberedGroups:bool) as this =
+    let restoreRememberedGroups = defaultArg restoreRememberedGroups RememberedGroupRestore.enabled
     let version = AssemblyInfo.informationalVersion
     let isStandAlone = System.Diagnostics.Debugger.IsAttached 
 
@@ -211,7 +218,7 @@ type Program(lifetime:LifetimeScope, ?settings:Settings) as this =
     /// A window that was in a group before WindowTabs restarted goes back to it, ahead of rules
     /// and auto grouping, so groups made by hand are kept; the first of its group starts it again.
     member this.restoredToken(hwnd:IntPtr) =
-        if groupedThisRun.Contains hwnd then None else WindowGroupToken.read hwnd
+        if not restoreRememberedGroups || groupedThisRun.Contains hwnd then None else WindowGroupToken.read hwnd
 
     member private this.appKey(hwnd:IntPtr) =
         match appKeys.TryGetValue hwnd with
@@ -244,16 +251,18 @@ type Program(lifetime:LifetimeScope, ?settings:Settings) as this =
     /// The group a window seen for the first time this run belongs back in: the one it was in
     /// before WindowTabs restarted, else the one a window with its program and title was last in.
     member this.savedPlacement(window:Window) =
-        match this.restoredToken window.hwnd with
-        | Some token -> Some token
-        | None when groupedThisRun.Contains window.hwnd || remembered.IsEmpty -> None
-        | None ->
-            this.rememberedMember window.hwnd
-            |> Option.bind(RememberedGroups.find remembered)
-            |> Option.filter(fun token ->
-                match this.liveGroupWithToken token with
-                | Some group -> this.sameDesktop group window.hwnd
-                | None -> true)
+        if not restoreRememberedGroups then None
+        else
+            match this.restoredToken window.hwnd with
+            | Some token -> Some token
+            | None when groupedThisRun.Contains window.hwnd || remembered.IsEmpty -> None
+            | None ->
+                this.rememberedMember window.hwnd
+                |> Option.bind(RememberedGroups.find remembered)
+                |> Option.filter(fun token ->
+                    match this.liveGroupWithToken token with
+                    | Some group -> this.sameDesktop group window.hwnd
+                    | None -> true)
 
     member this.tryRestoredGroup(window:Window) =
         this.savedPlacement window |> Option.map(fun token ->
@@ -321,6 +330,8 @@ type Program(lifetime:LifetimeScope, ?settings:Settings) as this =
                     | _ -> None)
             let moved = current |> Option.forall(fun info -> not(obj.ReferenceEquals(info,placed)))
             if not(WinUserApi.IsWindow hwnd) || now-since > TimeSpan.FromSeconds(10.0) || moved || placed.isRetiring then
+                settling.Remove hwnd |> ignore
+            elif not restoreRememberedGroups then
                 settling.Remove hwnd |> ignore
             elif not this.desktop.isDragging then
                 match this.rememberedMember hwnd |> Option.bind(RememberedGroups.find remembered) with
@@ -537,7 +548,7 @@ type Program(lifetime:LifetimeScope, ?settings:Settings) as this =
         isDroppedAndAwaitingGrouping.map(fun s -> s.remove hwnd)
         let withDelay = not isDropped && isNewGroup && delayTabExeNames.contains(window.pid.exeName)
         group.addWindow(hwnd, withDelay)
-        if restored.IsNone && not isDropped && RememberedGroups.hasApp remembered (AppIdentity.key (this.appKey hwnd)) then
+        if restoreRememberedGroups && restored.IsNone && not isDropped && RememberedGroups.hasApp remembered (AppIdentity.key (this.appKey hwnd)) then
             settling.[hwnd] <- (DateTime.UtcNow,group :?> GroupInfo)
             if initialDiscoveryComplete then settleTimer.Start()
 
