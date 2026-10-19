@@ -23,7 +23,7 @@ let main() =
         close = (fun () -> ())
         preview = (fun _ ->
             requested.Add(key)
-            Some(Img(Sz(48,32))) }
+            Some(Img(Sz(48,32)))) }
     let configuration front = {
         activeKey = front
         icon = SystemIcons.Application
