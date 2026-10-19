@@ -116,7 +116,16 @@ let main() =
     assertTrue (SettingsCatalog.searchRank "start" (SettingsCatalog.find "settings-reset") = 0) "A match inside a description word is not ranked last"
     assertTrue (List.head (ranked "TART") = "launch-at-sign-in") "Substrings ignore case and can start inside words"
     assertTrue (found "启动" |> List.contains "launch-at-sign-in") "Chinese searches work across languages"
-    assertTrue (found "start windows" = ["launch-at-sign-in"]) "All query terms must match"
+    // Both words must match a result, even when the catalog gains another relevant
+    // setting (e.g. restored groups have a startup keyword and windows description).
+    let starts = found "start" |> Set.ofList
+    let windows = found "windows" |> Set.ofList
+    let both = found "start windows" |> Set.ofList
+    assertTrue (both = Set.intersect starts windows &&
+                both.Contains "launch-at-sign-in" &&
+                both.Contains "restore-remembered-groups" &&
+                not(both.Contains "new-tab"))
+               "All query terms must match and include both startup-related settings"
     assertTrue (SettingsCatalog.matchRanges "start" "Start and restart" = [|0,5;12,5|]) "Highlight includes matches inside words"
     let general = SettingsCatalog.all |> List.filter(fun item -> item.page=GeneralSettings && item.id<>"language") |> List.map(fun item -> item.id)
     assertTrue (found "general" = general) "Page names find their settings but not the sidebar language picker"
