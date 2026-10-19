@@ -31,6 +31,7 @@ module SettingsCatalog =
         { id="theme"; page=AppearanceSettings; text=Strings.Settings.theme; binding=Choice("tabThemeMode",["system";"light";"dark"],"system") }
         { id="language"; page=GeneralSettings; text=Strings.Settings.language; binding=Choice("language",Localization.preferences,"system") }
         { id="launch-at-sign-in"; page=GeneralSettings; text=Strings.Settings.launchAtSignIn; binding=Toggle("runAtStartup",true,false) }
+        { id="restore-remembered-groups"; page=GeneralSettings; text=Strings.Settings.restoreRememberedGroups; binding=Toggle("restoreRememberedGroups",false,false) }
         { id="enable-tabs-for-new-apps"; page=ProgramSettings; text=Strings.Settings.enableTabsByDefault; binding=Toggle("enableTabbingByDefault",true,false) }
         { id="dim-inactive-groups"; page=GeneralSettings; text=Strings.Settings.dimInactiveGroups; binding=Toggle("hideInactiveTabs",true,false) }
         { id="tab-alignment"; page=GeneralSettings; text=Strings.Settings.tabAlignment; binding=Choice("alignment",["Left";"Center";"Right"],"Center") }
