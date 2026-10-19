@@ -30,6 +30,7 @@ type SettingsRec = {
     version: string
     appearance: AppearancePreferences
     runAtStartup: bool
+    restoreRememberedGroups: bool
     hideInactiveTabs: bool
     enableTabbingByDefault: bool
     replaceAltTab: bool

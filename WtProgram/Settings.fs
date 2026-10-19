@@ -140,6 +140,7 @@ type Settings(isStandAlone, ?saveDelay:int) as this =
                         appGroupingTargets = AppGroupingRules.readTargets settingsJson
                         tabSearchScope = settingsJson.getString("tabSearchScope").def(SettingsCatalog.tabSearchScopeDefault) |> SettingsCatalog.normalizeTabSearchScope
                         runAtStartup = settingsJson.getBool("runAtStartup").def(SettingsCatalog.toggleDefault "runAtStartup" hasExistingSettings)
+                        restoreRememberedGroups = settingsJson.getBool("restoreRememberedGroups").def(SettingsCatalog.toggleDefault "restoreRememberedGroups" hasExistingSettings)
                         hideInactiveTabs = settingsJson.getBool("hideInactiveTabs").def(SettingsCatalog.toggleDefault "hideInactiveTabs" hasExistingSettings)
                         enableTabbingByDefault = settingsJson.getBool("enableTabbingByDefault").def(SettingsCatalog.toggleDefault "enableTabbingByDefault" hasExistingSettings)
                         combineIconsInTaskbar = settingsJson.getBool("combineIconsInTaskbar").def(SettingsCatalog.toggleDefault "combineIconsInTaskbar" hasExistingSettings)
@@ -232,6 +233,7 @@ type Settings(isStandAlone, ?saveDelay:int) as this =
             for KeyValue(key,palette) in settings.appearance.presetEdits do edits.[key] <- AppearanceJson.writePalette palette
             settingsJson.setObject("tabPresetEdits", edits)
             settingsJson.setBool("runAtStartup", settings.runAtStartup)
+            settingsJson.setBool("restoreRememberedGroups", settings.restoreRememberedGroups)
             settingsJson.setBool("hideInactiveTabs", settings.hideInactiveTabs)
             settingsJson.setBool("enableTabbingByDefault", settings.enableTabbingByDefault)
             settingsJson.setBool("combineIconsInTaskbar", settings.combineIconsInTaskbar)

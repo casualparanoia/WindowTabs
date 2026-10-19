@@ -74,7 +74,8 @@ let main() =
             [{ id=5151; seen=DateTime.UtcNow; members=rememberedTitles |> List.map(fun title -> { app=app; title=title }); paths=Map.empty }]
         check ((runtimeSettings.rememberedGroups |> List.map(fun group -> group.id)) = [5151]) "Remembered groups were not kept in the settings"
         use lifetime = new LifetimeScope(fun error -> raise error)
-        let program = Program.Program(lifetime,settings=runtimeSettings)
+        // Preserve upstream restoration coverage while the fork defaults to no restoration.
+        let program = Program.Program(lifetime,settings=runtimeSettings,restoreRememberedGroups=true)
         let scansBefore,_,_ = RuntimeMetrics.snapshot()
         let input = {new IStartupInputPlugin with
                         member _.init() =

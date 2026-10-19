@@ -128,6 +128,9 @@ module Strings =
         let launchAtSignIn = { caption={ en="Start with Windows"; zh="随 Windows 启动"; ja="Windows と同時に起動" }
                                description={ en="Runs in the system tray after you sign in."; zh="登录后在系统托盘中运行。"; ja="サインイン後にシステムトレイで実行します。" }
                                keywords={ en="startup autostart"; zh="开机启动 自启动"; ja="スタートアップ 自動起動" } }
+        let restoreRememberedGroups = { caption={ en="Restore remembered groups"; zh="恢复记住的窗口分组"; ja="記憶したグループを復元" }
+                                        description={ en="Rejoin groups saved from an earlier run when windows are discovered. Turning this off does not disable manual grouping, app auto-grouping, or app rules. Existing groups do not immediately change."; zh="发现窗口时恢复上次保存的分组。关闭后仍可手动分组、按应用自动分组或使用应用规则。现有分组不会立即改变。"; ja="ウィンドウを検出したとき、以前保存したグループに戻します。無効でも手動グループ化、アプリの自動グループ化、ルールは使えます。既存のグループはすぐには変わりません。" }
+                                        keywords={ en="remember startup restore reopen grouping"; zh="启动 恢复 记忆 分组"; ja="起動 復元 グループ" } }
         let enableTabsByDefault = { caption={ en="Use tabs for new apps"; zh="新应用自动启用标签"; ja="新しいアプリでタブを使う" }
                                     description={ en="Only apps first discovered after this change. Existing apps keep their tab setting."; zh="只影响此后首次出现的应用。已有应用保留原来的标签设置。"; ja="変更後に初めて検出するアプリに適用します。既存のアプリのタブ設定は維持します。" }
                                     keywords={ en=""; zh=""; ja="" } }
