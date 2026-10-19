@@ -810,9 +810,10 @@ let main() =
                 let mutable previewActivations = 0
                 let tab text : string * TbButtonTab =
                     text, { icon=Drawing.SystemIcons.Application; text=text; activate=(fun () -> previewActivations <- previewActivations+1); close=ignore
-                            preview=fun thumbnail -> previewRequests.Add(text,thumbnail); Some(Img(Sz(320,200))) }
+                            preview=fun thumbnail -> previewRequests.Add(text,thumbnail); Some(Img(Sz(320,200)))
+                            hostPreview=fun _ -> Some(Img(Sz(320,200))) }
                 let info texts : TbButton =
-                    { icon=Drawing.SystemIcons.Application; otherIcons=[]; text="Order"; bounds=Rect(Pt(-20000,-20000),Sz(320,200))
+                    { activeKey=List.head texts; icon=Drawing.SystemIcons.Application; otherIcons=[]; text="Order"; bounds=Rect(Pt(-20000,-20000),Sz(320,200))
                       activate=ignore; toggleMinimizeRestore=ignore; close=ignore; tabs=List2(texts |> List.map tab) }
                 let button = new TaskBarButton(info ["a";"b"])
                 try
