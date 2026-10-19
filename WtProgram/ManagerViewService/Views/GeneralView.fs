@@ -7,6 +7,7 @@ type GeneralView() =
     do
         let startup = SettingsUi.sectionCard table (tr Strings.General.startup)
         SettingsBindings.toggleRow startup "launch-at-sign-in"
+        SettingsBindings.toggleRow startup "restore-remembered-groups"
         let behaviour = SettingsUi.sectionCard table (tr Strings.General.tabBehavior)
         SettingsBindings.toggleRow behaviour "dim-inactive-groups"
         let position = SettingsBindings.choiceRow behaviour "tab-position"
