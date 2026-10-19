@@ -405,7 +405,10 @@ type TaskBarButton(info) as this =
                     TaskbarPreview.send
                         (fun () -> GroupProxyPreview.active current |> Option.bind(fun tab -> tab.preview(true)))
                         (TaskbarPreview.centre msg.lParam.size)
-                        host.dwmSetIconicThumbnail
+                        (fun image ->
+                            let hr = host.dwmPublishIconicThumbnail image
+                            TaskbarPreviewTrace.write "host-thumbnail-publish" msg.hwnd current.activeKey
+                                (sprintf "HRESULT=0x%08X size=%A" hr image.size.record))
                     0
                 | WindowMessages.WM_DWMSENDICONICLIVEPREVIEWBITMAP ->
                     let current = config()
