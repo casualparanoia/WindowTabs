@@ -16,6 +16,7 @@ let main() =
     // DWM asks the combined *host* for a preview, not the registered child tab.
     // The host must choose the current front tab, and not retain a previous tab's delegate.
     let requested = ResizeArray<string>()
+    let requestedHost = ResizeArray<string>()
     let tab key = key, {
         icon = SystemIcons.Application
         text = key
@@ -23,7 +24,10 @@ let main() =
         close = (fun () -> ())
         preview = (fun _ ->
             requested.Add(key)
-            Some(Img(Sz(48,32)))) }
+            Some(Img(Sz(48,32))))
+        hostPreview = (fun _ ->
+            requestedHost.Add(key)
+            Some(Img(Sz(192,108)))) }
     let configuration front = {
         activeKey = front
         icon = SystemIcons.Application
@@ -37,14 +41,14 @@ let main() =
     for front in ["first";"second";"first"] do
         let mutable published = false
         TaskbarPreview.send
-            (fun () -> GroupProxyPreview.active (configuration front) |> Option.bind(fun active -> active.preview(true)))
+            (fun () -> GroupProxyPreview.active (configuration front) |> Option.bind(fun active -> active.hostPreview(true)))
             (TaskbarPreview.centre (Sz(120,80)))
             (fun image ->
                 check (image.size=Sz(120,80)) "Host thumbnail violated DWM's requested dimensions"
                 published <- true)
         check published "The active tab did not supply the host thumbnail"
-    check (List.ofSeq requested = ["first";"second";"first"])
-          "Switching the active tab left the host publishing the wrong tab's preview"
+    check (List.ofSeq requestedHost = ["first";"second";"first"] && requested.Count=0)
+          "Combined host reused the group-sized tab-strip preview instead of the active window"
     check ((GroupProxyPreview.active (configuration "missing")).IsNone)
           "A stale active tab key selected another, potentially hidden tab"
     let changes = ResizeArray<IntPtr * bool>()
