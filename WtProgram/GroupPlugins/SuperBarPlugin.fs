@@ -255,6 +255,8 @@ type TabCaptures() =
             blank.Clear()
 
 type TbButton = {
+    /// The front window's taskbar-preview key, even if this group is not foreground.
+    activeKey : string
     icon : Icon
     /// The icons of the group's other apps, front-most first.
     otherIcons : Icon list
@@ -273,6 +275,10 @@ and TbButtonTab = {
     close : unit -> unit
     preview : bool -> Img option
     }
+
+/// The combined group's proxy must use the front tab, not a stale/inactive thumbnail.
+module GroupProxyPreview =
+    let active (info:TbButton) = info.tabs.tryFind(fst >> (=) info.activeKey) |> Option.map snd
 
 type DwmWindow = {
     style: int
@@ -337,6 +343,7 @@ type TaskBarButton(info) as this =
     let mutable activeTab = IntPtr.Zero
     let showActive (preview:IntPtr) =
         activeTab <- preview
+        TaskbarPreviewTrace.write "host-active" this.window.hwnd "" (sprintf "tabProxy=%d" (preview.ToInt64()))
         taskbar.ActivateTab(this.window.hwnd)
         taskbar.SetTabActive(preview,this.window.hwnd,0)
     let rechain = new System.Windows.Forms.Timer(Interval=400)
@@ -390,14 +397,45 @@ type TaskBarButton(info) as this =
                     | _ ->
                         msg.def()
                 | WindowMessages.WM_CLOSE -> 0
+                | WindowMessages.WM_DWMSENDICONICTHUMBNAIL ->
+                    let current = config()
+                    let host = _os.windowFromHwnd(msg.hwnd)
+                    TaskbarPreviewTrace.write "host-thumbnail-request" msg.hwnd current.activeKey
+                        (sprintf "max=%A" msg.lParam.size.record)
+                    TaskbarPreview.send
+                        (fun () -> GroupProxyPreview.active current |> Option.bind(fun tab -> tab.preview(true)))
+                        (TaskbarPreview.centre msg.lParam.size)
+                        host.dwmSetIconicThumbnail
+                    0
                 | WindowMessages.WM_DWMSENDICONICLIVEPREVIEWBITMAP ->
-                    TaskbarPreviewTrace.write "host-request" msg.hwnd "" ""
-                    msg.def()
+                    let current = config()
+                    let host = _os.windowFromHwnd(msg.hwnd)
+                    // DWM rejects a bitmap larger than the proxy's actual client rect.
+                    let limit = current.bounds.size.intersect(host.clientSize)
+                    TaskbarPreviewTrace.write "host-live-request" msg.hwnd current.activeKey
+                        (sprintf "client=%A limit=%A" host.clientSize.record limit.record)
+                    if not limit.isEmptyArea then
+                        TaskbarPreview.send
+                            (fun () -> GroupProxyPreview.active current |> Option.bind(fun tab -> tab.preview(false)))
+                            (fun image -> image.crop limit)
+                            (fun image ->
+                                let hr = host.dwmPublishIconicLivePreview image
+                                TaskbarPreviewTrace.write "host-live-publish" msg.hwnd current.activeKey
+                                    (sprintf "HRESULT=0x%08X size=%A" hr image.size.record))
+                    0
                 | WindowMessages.WM_NCCALCSIZE -> 0
                 | _ -> msg.def()
         } 
                 
         window.setAppId(appId)
+        // The main group proxy is itself the Alt+Tab candidate. Per-tab windows already
+        // advertise iconic bitmaps, but that does not make the *host* publish its own.
+        window.dwmSetAttribute DWMWINDOWATTRIBUTE.DWMWA_FORCE_ICONIC_REPRESENTATION 1
+        window.dwmSetAttribute DWMWINDOWATTRIBUTE.DWMWA_HAS_ICONIC_BITMAP 1
+        TaskbarPreviewTrace.write "host-created" window.hwnd ""
+            (sprintf "style=0x%X exStyle=0x%X owner=%d" (window.style.ToInt64())
+                (window.styleEx.ToInt64())
+                (WinUserApi.GetWindow(window.hwnd,GetWindowConstants.GW_OWNER).ToInt64()))
         //the taskbar button does not appear consistently unless the window is visible
         //need to show here instead of setting WS_VISIBLE so that the invisible preview window doesn't steal active focus
         window.showNoActivate()
@@ -415,6 +453,8 @@ type TaskBarButton(info) as this =
     member this.window : Window = _window.Force()
 
     member this.invalidate() =
+        // This host bitmap is separate from Explorer's per-tab hover bitmaps.
+        this.window.dwmInvalidateIconicBitmaps()
         tabWindowsCell.value.values.iter <| fun (tab:TaskbarTab) ->
             tab.invalidate()
 
@@ -452,6 +492,9 @@ type TaskBarButton(info) as this =
 
         let prevInfo = infoCell.value
         infoCell.set(Some(info))
+        // Changing the front tab must invalidate DWM's *host* thumbnail cache.
+        if prevInfo |> Option.exists(fun previous -> previous.activeKey<>info.activeKey) then
+            this.window.dwmInvalidateIconicBitmaps()
 
         // Notify the shell before the group releases its previous icon copies.
         let sameIcons (badged:TaskbarBadgedIcon) =
@@ -875,6 +918,7 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
                 let topTab = Tab(top)
                 let chosen = this.chosenIcon top
                 let tbButtonInfo = {
+                    activeKey = TaskBarButton.key top
                     text = this.ts.tabInfo(topTab).text
                     bounds = previewBounds
                     // A chosen picture stands alone: it is the point, not the apps inside.
