@@ -20,7 +20,7 @@ let pumpUntil description predicate =
     check ok description
 
 let main() =
-    check (not Program.RememberedGroupRestore.enabled) "The fork's restoration switch is no longer off"
+    check (not Program.RememberedGroupRestore.enabled) "The fork's restoration default is no longer off"
     let oldDirectory = Environment.CurrentDirectory
     let directory = Path.Combine(__SOURCE_DIRECTORY__,"Debug","no-restore-"+Guid.NewGuid().ToString("N"))
     Directory.CreateDirectory(directory) |> ignore
@@ -28,6 +28,7 @@ let main() =
     try
         let settings = new Settings(true,saveDelay=0)
         let api = settings :> ISettings
+        check (not (unbox<bool> (api.getValue "restoreRememberedGroups"))) "Remembered-group restoration should default off"
         api.setValue("replaceAltTab",box false)
         api.setValue("enableTabbingByDefault",box false)
         api.setValue("combineIconsInTaskbar",box false)
@@ -99,6 +100,19 @@ let main() =
             | _ -> false)
         check ((program :> IProgram).getAutoGroupingEnabled path = false)
               "The restoration flag unexpectedly enabled per-app auto grouping"
+        // A change to the preference affects future lookup immediately, but must never
+        // retroactively rearrange existing tabs. The probe is not part of the fixture filter.
+        use probe = new Form(ShowInTaskbar=false,Text="Preference probe")
+        let probeHwnd = probe.Handle
+        WindowGroupToken.save probeHwnd 9292
+        check (program.restoredToken probeHwnd=None) "Default-off preference read a saved token"
+        api.setValue("restoreRememberedGroups",box true)
+        check (program.restoredToken probeHwnd=Some 9292) "Enabling the setting did not allow restoration lookup"
+        api.setValue("restoreRememberedGroups",box false)
+        check (program.restoredToken probeHwnd=None) "Disabling the setting did not stop restoration lookup"
+        check ((groupOf one.Handle).IsSome && (groupOf two.Handle).IsSome)
+              "Switching restore policy disturbed an existing manual group"
+        probe.Close()
         discovering <- false
         for form in all do form.Close()
         program.refresh()
