@@ -13,6 +13,40 @@ let disposed (bitmap:Bitmap) =
     with :? ArgumentException -> true
 
 let main() =
+    // DWM asks the combined *host* for a preview, not the registered child tab.
+    // The host must choose the current front tab, and not retain a previous tab's delegate.
+    let requested = ResizeArray<string>()
+    let tab key = key, {
+        icon = SystemIcons.Application
+        text = key
+        activate = (fun () -> ())
+        close = (fun () -> ())
+        preview = (fun _ ->
+            requested.Add(key)
+            Some(Img(Sz(48,32))) }
+    let configuration front = {
+        activeKey = front
+        icon = SystemIcons.Application
+        otherIcons = []
+        text = "Group"
+        bounds = Rect(Pt(0,0),Sz(48,32))
+        activate = (fun () -> ())
+        toggleMinimizeRestore = (fun () -> ())
+        tabs = List2([tab "first"; tab "second"])
+        close = (fun () -> ()) }
+    for front in ["first";"second";"first"] do
+        let mutable published = false
+        TaskbarPreview.send
+            (fun () -> GroupProxyPreview.active (configuration front) |> Option.bind(fun active -> active.preview(true)))
+            (TaskbarPreview.centre (Sz(120,80)))
+            (fun image ->
+                check (image.size=Sz(120,80)) "Host thumbnail violated DWM's requested dimensions"
+                published <- true)
+        check published "The active tab did not supply the host thumbnail"
+    check (List.ofSeq requested = ["first";"second";"first"])
+          "Switching the active tab left the host publishing the wrong tab's preview"
+    check ((GroupProxyPreview.active (configuration "missing")).IsNone)
+          "A stale active tab key selected another, potentially hidden tab"
     let changes = ResizeArray<IntPtr * bool>()
     let mutable shell = IntPtr(1)
     let visibility = TaskbarVisibility(changes.Add,shellIdentity=(fun () -> shell))
