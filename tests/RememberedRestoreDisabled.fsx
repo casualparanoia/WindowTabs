@@ -49,11 +49,16 @@ let main() =
         WindowGroupToken.save one.Handle 4242
         WindowGroupToken.save two.Handle 4242
 
+        // Match StartupGrouping's lifetime gating: closed fixture HWNDs must
+        // stop being tabbable, so their native group threads can exit.
+        let mutable discovering = true
         let baseFilter = FilterService() :> IFilterService
         Services.registerLocal<IFilterService>({ new IFilterService with
             member _.isAppWindow hwnd = List.contains hwnd handles
             member _.isAppWindowStyle hwnd = List.contains hwnd handles
-            member _.isTabbableWindow hwnd = List.contains hwnd handles && baseFilter.getIsTabbingEnabledForProcess path
+            member _.isTabbableWindow hwnd =
+                discovering && WinUserApi.IsWindow hwnd && List.contains hwnd handles &&
+                baseFilter.getIsTabbingEnabledForProcess path
             member _.isTabbingEnabledForAllProcessesByDefault with get()=false and set _=()
             member _.setIsTabbingEnabledForProcess value enabled = baseFilter.setIsTabbingEnabledForProcess value enabled
             member _.setIsTabbingEnabledForProcesses values enabled = baseFilter.setIsTabbingEnabledForProcesses values enabled
@@ -94,6 +99,7 @@ let main() =
             | _ -> false)
         check ((program :> IProgram).getAutoGroupingEnabled path = false)
               "The restoration flag unexpectedly enabled per-app auto grouping"
+        discovering <- false
         for form in all do form.Close()
         program.refresh()
         pumpUntil "Fixture groups did not exit" (fun () -> Services.desktop.groups.isEmpty)
