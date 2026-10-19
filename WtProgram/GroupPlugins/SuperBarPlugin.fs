@@ -274,6 +274,8 @@ and TbButtonTab = {
     activate : unit -> unit
     close : unit -> unit
     preview : bool -> Img option
+    /// One window's content for native Alt+Tab; no group-sized tab-strip canvas.
+    hostPreview : bool -> Img option
     }
 
 /// The combined group's proxy must use the front tab, not a stale/inactive thumbnail.
@@ -404,7 +406,7 @@ type TaskBarButton(info) as this =
                         (sprintf "max=%A" msg.lParam.size.record)
                     if not msg.lParam.size.isEmptyArea then
                         TaskbarPreview.send
-                            (fun () -> GroupProxyPreview.active current |> Option.bind(fun tab -> tab.preview(true)))
+                            (fun () -> GroupProxyPreview.active current |> Option.bind(fun tab -> tab.hostPreview(true)))
                             (TaskbarPreview.centre msg.lParam.size)
                             (fun image ->
                                 let hr = host.dwmPublishIconicThumbnail image
@@ -420,8 +422,8 @@ type TaskBarButton(info) as this =
                         (sprintf "client=%A limit=%A" host.clientSize.record limit.record)
                     if not limit.isEmptyArea then
                         TaskbarPreview.send
-                            (fun () -> GroupProxyPreview.active current |> Option.bind(fun tab -> tab.preview(false)))
-                            (fun image -> image.crop limit)
+                            (fun () -> GroupProxyPreview.active current |> Option.bind(fun tab -> tab.hostPreview(false)))
+                            (TaskbarPreview.centre limit)
                             (fun image ->
                                 let hr = host.dwmPublishIconicLivePreview image
                                 TaskbarPreviewTrace.write "host-live-publish" msg.hwnd current.activeKey
@@ -496,9 +498,11 @@ type TaskBarButton(info) as this =
 
         let prevInfo = infoCell.value
         infoCell.set(Some(info))
-        // Changing the front tab must invalidate DWM's *host* thumbnail cache.
-        if prevInfo |> Option.exists(fun previous -> previous.activeKey<>info.activeKey) then
-            this.window.dwmInvalidateIconicBitmaps()
+        // Invalidate after moving/registering all windows below. DWM caches the host's
+        // bitmap independently of its tabs and does not track membership or size edits.
+        let previewChanged = prevInfo |> Option.exists(fun previous ->
+            previous.activeKey<>info.activeKey || previous.bounds<>info.bounds ||
+            previous.tabs.map(fst).list<>info.tabs.map(fst).list)
 
         // Notify the shell before the group releases its previous icon copies.
         let sameIcons (badged:TaskbarBadgedIcon) =
@@ -545,6 +549,7 @@ type TaskBarButton(info) as this =
             sendTabOrder()
             resendTabOrder.Stop()
             resendTabOrder.Start()
+        if previewChanged then this.window.dwmInvalidateIconicBitmaps()
        
     /// The order was just changed and is to be sent again.
     member this.isResendingTabOrder = resendTabOrder.Enabled
@@ -949,6 +954,17 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
                             close = fun() -> 
                                 let (Tab(hwnd)) = tab
                                 this.os.windowFromHwnd(hwnd).close()
+                            hostPreview = fun _ ->
+                                try
+                                    let window = this.os.windowFromHwnd(hwnd)
+                                    let area = if window.isMinimized then this.wtGroup.previewArea else window.bounds
+                                    let image = captures.preview hwnd area.size.Size window.isMinimized
+                                                    (this.zorder.tryHead=Some hwnd)
+                                                    (fun () -> this.ts.tabInfo(tab).preview())
+                                    TaskbarPreviewTrace.write "host-source" hwnd (TaskBarButton.key hwnd)
+                                        (sprintf "source=%A group=%A" image.size.record previewBounds.size.record)
+                                    Some image
+                                with _ -> None
                             preview = fun(isThumbnail) -> 
                                 try
                                     let (Tab(hwnd)) = tab
