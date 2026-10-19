@@ -17,10 +17,13 @@ Stardock AltTabby, and does not prove either consumer uses DWM iconic bitmaps.
 * Application HWNDs are owned by the per-tab proxy so they follow the
   group across virtual desktops. The per-tab ownership can be temporarily
   released while Explorer's hover thumbnails are displayed.
-* The **new** host handlers publish the front tab's
-  `TbButtonTab.preview` bitmap. `TbButton.activeKey` is recomputed from the
-  group's leading member whenever the group changes. DWM invalidation
-  occurs on front-tab changes and group bounds invalidation.
+* The host handlers now publish the front tab's **standalone** `TbButtonTab.hostPreview`
+  bitmap: the active application's content, without embedding it in the group's
+  full-size tab-strip canvas. Explorer's per-tab hover still uses `TbButtonTab.preview`
+  and retains its existing composite content and strip rendering. `TbButton.activeKey`
+  is recomputed from the group's leading member. DWM's host cache is invalidated
+  on active-tab changes, member insertion/removal/reorder, group geometry edits and
+  explicit group bounds events.
 * The host advertises `DWMWA_FORCE_ICONIC_REPRESENTATION=1` and
   `DWMWA_HAS_ICONIC_BITMAP=1`. The host no longer delegates a
   `WM_DWMSENDICONICLIVEPREVIEWBITMAP` request to `DefWindowProc`.
@@ -66,8 +69,17 @@ Look for:
    asked the host for a bitmap, with requested size and HRESULT.
 3. `host-live-request` and `host-live-publish`: the full-sized Peek path.
 4. `host-active`: maps selected per-tab proxy HWND on tab changes.
-5. Existing `thumbnail-request`, `capture`, `publish`, and
+5. `host-source`: source dimensions before the host fits the active window to
+   DWM's requested canvas. A small underlying capture may still look blurred.
+6. Existing `thumbnail-request`, `capture`, `publish`, and
    `register` stages: verify ordinary Explorer taskbar-hover paths still work.
+
+A blank initial capture (especially a Chromium/Electron window that cannot be
+printed while hidden) cannot be fixed by centring or invalidation alone.
+WindowTabs retains a previous non-blank capture up to 800 px on its longest side,
+so switching to an inactive tab can temporarily use a lower-resolution image.
+If black/soft frames remain, compare `host-source` dimensions and publish
+HRESULTs with the app's foreground/minimized state before changing capture backends.
 
 A successful HRESULT proves DWM accepted a published bitmap **for this
 HWND**, not that AltTabby draws it. If AltTabby captures the real application
