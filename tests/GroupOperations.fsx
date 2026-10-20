@@ -778,6 +778,11 @@ let main() =
             let seedHwnd = handles.[1]
             let destination = (desktop :> IDesktop).createGroup(false)
             let destinationInfo = destination :?> GroupInfo
+            let onDestination action =
+                let mutable answer = None
+                destinationInfo.invokeGroup(fun () -> answer <- Some(action destinationInfo.group))
+                pumpUntil(fun () -> answer.IsSome)
+                answer.Value
             // An empty group has no TabStrip/HWND yet: the actual menu always
             // belongs to an existing group with at least one window. Establish
             // that real precondition, preserving another member as the target
@@ -786,6 +791,7 @@ let main() =
             pumpUntil(fun () ->
                 destination.windows.contains((=)seedHwnd) &&
                 not((info :> IGroup).windows.contains((=)seedHwnd)))
+            pumpUntil(fun () -> onDestination(fun group -> group.windows.contains(seedHwnd)))
             let destinationHwnd = destination.hwnd
             manualEligible.Add(memberHwnd) |> ignore
             try
@@ -793,15 +799,18 @@ let main() =
                 pumpUntil(fun () ->
                     destination.windows.contains((=)memberHwnd) &&
                     not((info :> IGroup).windows.contains((=)memberHwnd)))
-                let mutable manual = None
-                destinationInfo.invokeGroup(fun () -> manual <- Some destinationInfo.group.isManual)
-                pumpUntil(fun () -> manual.IsSome)
-                check (manual=Some true)
+                // Desktop snapshots are optimistic; do not begin a reverse
+                // transfer before the destination's native group has attached.
+                pumpUntil(fun () -> onDestination(fun group -> group.windows.contains(memberHwnd)))
+                check (onDestination(fun group -> group.isManual))
                       "Explicit context-menu transfer was not recorded as manual grouping"
                 (desktop :> IDesktop).addWindowToGroup(info.hwnd,memberHwnd)
                 pumpUntil(fun () ->
                     (info :> IGroup).windows.contains((=)memberHwnd) &&
                     not(destination.windows.contains((=)memberHwnd)))
+                pumpUntil(fun () ->
+                    onGroup(fun group -> group.windows.contains(memberHwnd)) &&
+                    onDestination(fun group -> not(group.windows.contains(memberHwnd))))
                 check (onGroup(fun group -> group.isManual))
                       "Reattaching from another group was not recognized as manual"
             finally
@@ -812,8 +821,9 @@ let main() =
                     if destination.windows.contains((=)candidate) then
                         info.addAfterDetaching(destinationInfo,candidate)
                 pumpUntil(fun () ->
-                    (info :> IGroup).windows.contains((=)seedHwnd) &&
-                    (info :> IGroup).windows.contains((=)memberHwnd))
+                    onGroup(fun group ->
+                        group.windows.contains(seedHwnd) &&
+                        group.windows.contains(memberHwnd)))
                 destination.destroy()
                 pumpUntil(fun () -> desktop.retainedGroupCount=1)
             printfn "PASS: grouped order, normal placement, maximize followers, minimize/restore, stale events, explicit menu transfer and controlled slow application. Measurements exclude real input and DWM."
