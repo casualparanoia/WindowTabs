@@ -128,13 +128,36 @@ type WindowPlacementQueue<'a>(apply:IntPtr -> 'a -> (unit -> bool) -> unit, ?wor
         | _ -> false)
     member _.retainedCount = lock gate (fun () -> entries.Count)
 
+/// A shared point of the active window's visible frame. Values are stable settings IDs.
+module WindowSizeAnchor =
+    let values = ["TopLeft";"TopCenter";"TopRight";"MiddleLeft";"Center";"MiddleRight";"BottomLeft";"BottomCenter";"BottomRight"]
+    let normalize value = if List.contains value values then value else "TopLeft"
+    let factors value =
+        match normalize value with
+        | "TopCenter" -> 1,0
+        | "TopRight" -> 2,0
+        | "MiddleLeft" -> 0,1
+        | "Center" -> 1,1
+        | "MiddleRight" -> 2,1
+        | "BottomLeft" -> 0,2
+        | "BottomCenter" -> 1,2
+        | "BottomRight" -> 2,2
+        | _ -> 0,0
+    /// Align corresponding visible-frame anchor points without changing the follower size.
+    let target (anchor:string) (frame:Rect) (own:Rect) (seen:Rect) =
+        let x,y = factors anchor
+        let dx,dy = seen.x-own.x,seen.y-own.y
+        let left = frame.x + (frame.width-seen.width)*x/2 - dx
+        let top = frame.y + (frame.height-seen.height)*y/2 - dy
+        Rect(Pt(left,top),own.size)
+
 type FollowerPlacementRequest =
     /// The source's window bounds and placement, the window to stay below, and the source's
     /// visible frame when the follower should match that rather than the window bounds.
     | AlignWindow of Rect * OSWindowPlacement * IntPtr option * Rect option
     /// Move a normal follower to the group's visible-frame origin while keeping
     /// its own native dimensions. Maximize/minimize are never copied from the top.
-    | AlignPosition of Rect * IntPtr option
+    | AlignPosition of Rect * IntPtr option * string
     /// A window restored without activation can still rise above the tab that asked for it;
     /// the handle it should stay below goes with the request.
     | SetMinimized of bool * IntPtr option
@@ -159,7 +182,7 @@ module FollowerPlacement =
                     if minimized then window.prepareMinimizeAnchor(valid)
                     if valid() then window.showWindow(if minimized then ShowWindowCommands.SW_SHOWMINNOACTIVE else ShowWindowCommands.SW_SHOWNOACTIVATE)
                     below |> Option.iter(fun top -> if valid() && WinUserApi.IsWindow(top) then window.insertAfter(top))
-            | AlignPosition(frame,below) ->
+            | AlignPosition(frame,below,anchor) ->
                 // Reading the follower's current frame avoids replaying another
                 // tab's width/height; size is never present in this request.
                 // Never reposition a maximized/minimized window: preserve its OS state.
@@ -168,8 +191,7 @@ module FollowerPlacement =
                    state=ShowWindowCommands.SW_SHOWNOACTIVATE then
                     let own,seen = window.bounds,window.visibleBounds
                     if not seen.size.isEmptyArea then
-                        let left,top = seen.x-own.x,seen.y-own.y
-                        let target = Rect(Pt(frame.x-left,frame.y-top),own.size)
+                        let target = WindowSizeAnchor.target anchor frame own seen
                         if own<>target && valid() then window.move(target)
                         below |> Option.iter(fun top ->
                             if valid() && WinUserApi.IsWindow top then window.insertAfter(top))
@@ -228,7 +250,7 @@ module FollowerPlacement =
     /// As request and alignBelowRequest, matching the source's visible frame when restored.
     let alignFrameRequest hwnd bounds visible placement below = identity hwnd,AlignWindow(bounds,placement,below,Some visible)
     /// Keep each tab's native dimensions; align only the visible frame origin.
-    let alignPositionRequest hwnd visible below = identity hwnd,AlignPosition(visible,below)
+    let alignPositionRequest hwnd visible below anchor = identity hwnd,AlignPosition(visible,below,WindowSizeAnchor.normalize anchor)
     let minimizeRequest hwnd minimized = identity hwnd,SetMinimized(minimized,None)
     let restoreBelowRequest hwnd top = identity hwnd,SetMinimized(false,Some top)
     let hideRequest hwnd = identity hwnd,HideForMove
