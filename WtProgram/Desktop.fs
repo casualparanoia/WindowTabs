@@ -38,7 +38,10 @@ type GroupInfo(enableSuperBar, settings:ISettings, desktopDispatcher:IDispatcher
     let initialAppearance = ThemeService.currentAppearance()
     // Capture on the caller's main thread, which the group constructor blocks.
     let keepSizes = unbox<bool> (settings.getValue "keepIndividualWindowSizes")
-    let initialAnchor = WindowSizeAnchor.normalize (unbox<string> (settings.getValue "individualWindowAnchor"))
+    let initialAnchor =
+        match settings.getValue "individualWindowAnchor" with
+        | :? string as value -> WindowSizeAnchor.normalize value
+        | _ -> "TopLeft"
     let (_group, invoker) = ThreadHelper.startOnThreadAndWait <| fun() ->
         let plugins = List2<_>([
             Some(MouseScrollPlugin().cast<IPlugin>())
