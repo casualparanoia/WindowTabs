@@ -142,6 +142,7 @@ type Settings(isStandAlone, ?saveDelay:int) as this =
                         runAtStartup = settingsJson.getBool("runAtStartup").def(SettingsCatalog.toggleDefault "runAtStartup" hasExistingSettings)
                         hideInactiveTabs = settingsJson.getBool("hideInactiveTabs").def(SettingsCatalog.toggleDefault "hideInactiveTabs" hasExistingSettings)
                         keepIndividualWindowSizes = settingsJson.getBool("keepIndividualWindowSizes").def(SettingsCatalog.toggleDefault "keepIndividualWindowSizes" hasExistingSettings)
+                        keepIndividualWindowPositions = settingsJson.getBool("keepIndividualWindowPositions").def(SettingsCatalog.toggleDefault "keepIndividualWindowPositions" hasExistingSettings)
                         individualWindowAnchor = settingsJson.getString("individualWindowAnchor").def(SettingsCatalog.choiceDefault "individualWindowAnchor") |> SettingsCatalog.normalizeChoice "individualWindowAnchor"
                         enableTabbingByDefault = settingsJson.getBool("enableTabbingByDefault").def(SettingsCatalog.toggleDefault "enableTabbingByDefault" hasExistingSettings)
                         combineIconsInTaskbar = settingsJson.getBool("combineIconsInTaskbar").def(SettingsCatalog.toggleDefault "combineIconsInTaskbar" hasExistingSettings)
@@ -236,6 +237,7 @@ type Settings(isStandAlone, ?saveDelay:int) as this =
             settingsJson.setBool("runAtStartup", settings.runAtStartup)
             settingsJson.setBool("hideInactiveTabs", settings.hideInactiveTabs)
             settingsJson.setBool("keepIndividualWindowSizes", settings.keepIndividualWindowSizes)
+            settingsJson.setBool("keepIndividualWindowPositions", settings.keepIndividualWindowPositions)
             settingsJson.setString("individualWindowAnchor", settings.individualWindowAnchor)
             settingsJson.setBool("enableTabbingByDefault", settings.enableTabbingByDefault)
             settingsJson.setBool("combineIconsInTaskbar", settings.combineIconsInTaskbar)
