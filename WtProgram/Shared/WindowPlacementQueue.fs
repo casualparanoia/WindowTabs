@@ -1,6 +1,7 @@
 namespace Bemo
 open System
 open System.Collections.Generic
+open System.Collections.Concurrent
 open System.Diagnostics
 open System.Threading
 
@@ -162,85 +163,119 @@ type FollowerPlacementRequest =
     /// the handle it should stay below goes with the request.
     | SetMinimized of bool * IntPtr option
     | HideForMove
+    /// Undo move-time parking without aligning independent window positions.
+    | RestoreParked
     | PrepareMinimizeAnchor
 
 module FollowerPlacement =
+    type private ParkedWindow = { expected: int * int; original: Rect; parked: Rect }
+    let private locks = ConcurrentDictionary<IntPtr,obj>()
+    let private parked = ConcurrentDictionary<IntPtr,ParkedWindow>()
+    let private windowLock hwnd = locks.GetOrAdd(hwnd,fun _ -> obj())
+    let private forgetPark hwnd =
+        let mutable old = Unchecked.defaultof<ParkedWindow>
+        parked.TryRemove(hwnd,&old) |> ignore
+
     let private identity hwnd =
         let mutable pid = 0
         let tid = WinUserApi.GetWindowThreadProcessId(hwnd,&pid)
         pid,tid
 
-    let private apply hwnd (expected,request) current =
-        let valid() = current() && identity hwnd=expected && WinUserApi.IsWindow(hwnd)
-        if valid() then
+    /// Recover only a window that is still at the point where we parked it.
+    /// If the user has moved it since, never overwrite their new position.
+    let private restoreParked hwnd =
+        let mutable old = Unchecked.defaultof<ParkedWindow>
+        if parked.TryRemove(hwnd,&old) && WinUserApi.IsWindow hwnd &&
+           identity hwnd=old.expected then
             let window = OS().windowFromHwnd(hwnd)
-            match request with
-            | PrepareMinimizeAnchor -> window.prepareMinimizeAnchor(valid)
-            | HideForMove -> if valid() && not window.isMinimized then window.hideOffScreen(None)
-            | SetMinimized(minimized,below) ->
-                if window.isMinimized<>minimized && valid() then
-                    if minimized then window.prepareMinimizeAnchor(valid)
-                    if valid() then window.showWindow(if minimized then ShowWindowCommands.SW_SHOWMINNOACTIVE else ShowWindowCommands.SW_SHOWNOACTIVATE)
-                    below |> Option.iter(fun top -> if valid() && WinUserApi.IsWindow(top) then window.insertAfter(top))
-            | AlignPosition(frame,below,anchor) ->
-                // Reading the follower's current frame avoids replaying another
-                // tab's width/height; size is never present in this request.
-                // Never reposition a maximized/minimized window: preserve its OS state.
-                let state = window.placement.showCmd
-                if state=ShowWindowCommands.SW_SHOWNORMAL ||
-                   state=ShowWindowCommands.SW_SHOWNOACTIVATE then
-                    let own,seen = window.bounds,window.visibleBounds
-                    if not seen.size.isEmptyArea then
-                        let target = WindowSizeAnchor.target anchor frame own seen
-                        if own<>target && valid() then window.move(target)
-                        below |> Option.iter(fun top ->
-                            if valid() && WinUserApi.IsWindow top then window.insertAfter(top))
-            | AlignWindow(bounds,wp,below,visible) ->
-                let actual = window.placement
-                let previous = defaultArg below window.prevZorder.hwnd
-                let mutable positioned = false
-                // Apps draw invisible resize borders of different widths (new Outlook 10px, most
-                // 7px at 125%). Matching window bounds left the visible frames a few pixels apart,
-                // so the tabs, which sit on the visible frame, shifted as the tabs were switched.
-                // A restored follower takes the source's visible frame plus its own borders.
-                let target() =
-                    match visible with
-                    | Some frame when wp.showCmd=ShowWindowCommands.SW_SHOWNORMAL ->
-                        let own,seen = window.bounds,window.visibleBounds
-                        if seen.size.isEmptyArea then bounds
-                        else
-                            let left,top = seen.x-own.x,seen.y-own.y
-                            Rect(Pt(frame.x-left,frame.y-top),Sz(frame.width+own.width-seen.width,frame.height+own.height-seen.height))
-                    | _ -> bounds
-                let move() = if valid() then positioned <- true;window.move(target())
-                let place value =
-                    if valid() then
-                        positioned <- true
-                        window.setPlacement(value)
-                // MoveWindow preserves the visible bounds of an Aero snapped window.
-                if wp.showCmd=ShowWindowCommands.SW_SHOWNORMAL && actual.showCmd=ShowWindowCommands.SW_SHOWNORMAL then
-                    if window.bounds<>target() then move()
-                elif actual.showCmd=ShowWindowCommands.SW_SHOWMINIMIZED then
-                    let minimized = {wp with showCmd=ShowWindowCommands.SW_SHOWMINIMIZED}
-                    if actual<>minimized then place minimized
-                elif wp.showCmd=ShowWindowCommands.SW_SHOWNORMAL then
-                    // Snapping keeps the old restore rectangle in WINDOWPLACEMENT.
-                    // Restore without activation, then use the source's actual frame.
-                    place {wp with showCmd=ShowWindowCommands.SW_SHOWNOACTIVATE}
-                    move()
-                elif actual.showCmd=ShowWindowCommands.SW_SHOWMAXIMIZED && wp.showCmd=ShowWindowCommands.SW_SHOWMAXIMIZED then
-                    // Cross-monitor maximization requires moving before restoring placement.
-                    if actual<>wp || window.bounds<>target() then
-                        move()
-                        place wp
-                elif actual<>wp then place wp
-                if valid() && window.needsMinimizeAnchor then positioned <- true
-                window.prepareMinimizeAnchor(valid)
-                // Restoring can move again after SetWindowPlacement. Correct stacking
-                // after every native phase, using the source captured by the request.
-                if positioned && valid() && not window.isMinimized && previous<>IntPtr.Zero && WinUserApi.IsWindow(previous) then
-                    window.insertAfter(previous)
+            if not window.isMinimized && window.bounds.location=old.parked.location then
+                window.move(old.original)
 
+    let private apply hwnd (expected,request) current =
+        lock (windowLock hwnd) (fun () ->
+            let valid() = current() && identity hwnd=expected && WinUserApi.IsWindow(hwnd)
+            if valid() then
+                let window = OS().windowFromHwnd(hwnd)
+                match request with
+                | PrepareMinimizeAnchor -> window.prepareMinimizeAnchor(valid)
+                | HideForMove ->
+                    if valid() && not window.isMinimized && not(parked.ContainsKey hwnd) then
+                        let original = window.bounds
+                        window.hideOffScreen(None)
+                        if valid() then
+                            parked.[hwnd] <- {expected=expected; original=original; parked=window.bounds}
+                | RestoreParked -> if valid() then restoreParked hwnd
+                | SetMinimized(minimized,below) ->
+                    if window.isMinimized<>minimized && valid() then
+                        if minimized then window.prepareMinimizeAnchor(valid)
+                        if valid() then window.showWindow(if minimized then ShowWindowCommands.SW_SHOWMINNOACTIVE else ShowWindowCommands.SW_SHOWNOACTIVATE)
+                        below |> Option.iter(fun top -> if valid() && WinUserApi.IsWindow(top) then window.insertAfter(top))
+                | AlignPosition(frame,below,anchor) ->
+                    // Reading the follower's current frame avoids replaying another
+                    // tab's width/height; size is never present in this request.
+                    // Never reposition a maximized/minimized window: preserve its OS state.
+                    let state = window.placement.showCmd
+                    if state=ShowWindowCommands.SW_SHOWNORMAL ||
+                       state=ShowWindowCommands.SW_SHOWNOACTIVATE then
+                        let own,seen = window.bounds,window.visibleBounds
+                        if not seen.size.isEmptyArea then
+                            let target = WindowSizeAnchor.target anchor frame own seen
+                            if own<>target && valid() then window.move(target)
+                            below |> Option.iter(fun top ->
+                                if valid() && WinUserApi.IsWindow top then window.insertAfter(top))
+                            if valid() && parked.ContainsKey hwnd then
+                                let old = parked.[hwnd]
+                                if window.bounds.location<>old.parked.location then forgetPark hwnd
+                | AlignWindow(bounds,wp,below,visible) ->
+                    let actual = window.placement
+                    let previous = defaultArg below window.prevZorder.hwnd
+                    let mutable positioned = false
+                    // Apps draw invisible resize borders of different widths (new Outlook 10px, most
+                    // 7px at 125%). Matching window bounds left the visible frames a few pixels apart,
+                    // so the tabs, which sit on the visible frame, shifted as the tabs were switched.
+                    // A restored follower takes the source's visible frame plus its own borders.
+                    let target() =
+                        match visible with
+                        | Some frame when wp.showCmd=ShowWindowCommands.SW_SHOWNORMAL ->
+                            let own,seen = window.bounds,window.visibleBounds
+                            if seen.size.isEmptyArea then bounds
+                            else
+                                let left,top = seen.x-own.x,seen.y-own.y
+                                Rect(Pt(frame.x-left,frame.y-top),Sz(frame.width+own.width-seen.width,frame.height+own.height-seen.height))
+                        | _ -> bounds
+                    let move() = if valid() then positioned <- true;window.move(target())
+                    let place value =
+                        if valid() then
+                            positioned <- true
+                            window.setPlacement(value)
+                    // MoveWindow preserves the visible bounds of an Aero snapped window.
+                    if wp.showCmd=ShowWindowCommands.SW_SHOWNORMAL && actual.showCmd=ShowWindowCommands.SW_SHOWNORMAL then
+                        if window.bounds<>target() then move()
+                    elif actual.showCmd=ShowWindowCommands.SW_SHOWMINIMIZED then
+                        let minimized = {wp with showCmd=ShowWindowCommands.SW_SHOWMINIMIZED}
+                        if actual<>minimized then place minimized
+                    elif wp.showCmd=ShowWindowCommands.SW_SHOWNORMAL then
+                        // Snapping keeps the old restore rectangle in WINDOWPLACEMENT.
+                        // Restore without activation, then use the source's actual frame.
+                        place {wp with showCmd=ShowWindowCommands.SW_SHOWNOACTIVATE}
+                        move()
+                    elif actual.showCmd=ShowWindowCommands.SW_SHOWMAXIMIZED && wp.showCmd=ShowWindowCommands.SW_SHOWMAXIMIZED then
+                        // Cross-monitor maximization requires moving before restoring placement.
+                        if actual<>wp || window.bounds<>target() then
+                            move()
+                            place wp
+                    elif actual<>wp then place wp
+                    if valid() && window.needsMinimizeAnchor then positioned <- true
+                    window.prepareMinimizeAnchor(valid)
+                    // Restoring can move again after SetWindowPlacement. Correct stacking
+                    // after every native phase, using the source captured by the request.
+                    if positioned && valid() && not window.isMinimized && previous<>IntPtr.Zero && WinUserApi.IsWindow(previous) then
+                        window.insertAfter(previous)
+                    if valid() && parked.ContainsKey hwnd then
+                        let old = parked.[hwnd]
+                        if window.bounds.location<>old.parked.location then forgetPark hwnd
+
+        )
     /// A group's windows usually each have a thread of their own and change state together, so a
     /// large group is not minimized or restored four windows at a time. The thread pool adds threads
     /// beyond the processor count only slowly, so the limit stays within it.
@@ -254,6 +289,11 @@ module FollowerPlacement =
     let minimizeRequest hwnd minimized = identity hwnd,SetMinimized(minimized,None)
     let restoreBelowRequest hwnd top = identity hwnd,SetMinimized(false,Some top)
     let hideRequest hwnd = identity hwnd,HideForMove
+    let restoreParkedRequest hwnd = identity hwnd,RestoreParked
+    /// Release cancels queued work. The lock waits for an already executing hide.
+    let releaseAndRestore owner hwnd =
+        queue.release(owner,hwnd)
+        lock (windowLock hwnd) (fun () -> restoreParked hwnd)
     let prepareMinimizeRequest hwnd = identity hwnd,PrepareMinimizeAnchor
     let isChangingMinimizeState owner hwnd =
         queue.isWindowBusyWith(owner,hwnd,fun (_,request) -> match request with SetMinimized _ -> true | _ -> false)
