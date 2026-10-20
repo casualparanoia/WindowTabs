@@ -571,9 +571,12 @@ and
         
     member this.setAppId appId = Win32Helper.SetWindowAppId(hwnd, appId) |> ignore
     
-    member this.dwmInvalidateIconicBitmaps() = 
-        if os.isWin7OrHigher then
-            DwmApi.DwmInvalidateIconicBitmaps(hwnd) |> ignore
+    member this.dwmInvalidateIconicBitmapsResult() =
+        if os.isWin7OrHigher then DwmApi.DwmInvalidateIconicBitmaps(hwnd)
+        else 0
+
+    member this.dwmInvalidateIconicBitmaps() =
+        this.dwmInvalidateIconicBitmapsResult() |> ignore
 
     member this.dwmSetAttribute attribute value =
         if os.isWin7OrHigher then
