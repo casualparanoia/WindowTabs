@@ -11,6 +11,9 @@ type GeneralView() =
         SettingsBindings.toggleRow behaviour "dim-inactive-groups"
         let keepSizes = SettingsBindings.settingToggle "keepIndividualWindowSizes"
         SettingsUi.settingRow behaviour "keep-individual-window-sizes" keepSizes
+        let keepPositions = SettingsBindings.settingToggle "keepIndividualWindowPositions"
+        let positionsRow = SettingsUi.settingRowControl behaviour "keep-individual-window-positions" keepPositions
+        SettingsUi.indentDependentRow positionsRow
         let corner words = String.concat " · " (List.map tr words)
         let anchor = SettingsBindings.choiceRow behaviour "individual-window-anchor"
                         [| corner [Strings.Common.top;Strings.Common.left]
@@ -24,9 +27,13 @@ type GeneralView() =
                            corner [Strings.Common.bottom;Strings.Common.right] |]
         let anchorRow = anchor.Parent :?> SettingsRow
         SettingsUi.indentDependentRow anchorRow
-        let updateAnchor() = anchorRow.Collapsed <- not keepSizes.Checked
-        updateAnchor()
-        keepSizes.CheckedChanged.Add(fun _ -> updateAnchor())
+        let updatePositionOptions() =
+            positionsRow.Collapsed <- not keepSizes.Checked
+            // Alignment anchors apply only when position locking remains active.
+            anchorRow.Collapsed <- not keepSizes.Checked || keepPositions.Checked
+        updatePositionOptions()
+        keepSizes.CheckedChanged.Add(fun _ -> updatePositionOptions())
+        keepPositions.CheckedChanged.Add(fun _ -> updatePositionOptions())
         let position = SettingsBindings.choiceRow behaviour "tab-position"
                            [|tr Strings.TabMenu.top;tr Strings.Common.left;tr Strings.Common.right|]
         let alignment = SettingsBindings.choiceRow behaviour "tab-alignment"
