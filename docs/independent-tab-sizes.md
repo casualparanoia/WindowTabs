@@ -54,3 +54,35 @@ Manual test with two normal, resizable app windows:
 This change is independent of remembered-group restoration and the DWM proxy
 thumbnail investigation. It should not be merged until Windows automated and
 interactive validation have passed.
+
+
+## Optional independent positions
+
+Under **Keep individual window sizes**, enable **Keep individual window positions**
+(`keepIndividualWindowPositions`, persisted default `false`). When enabled, member
+windows retain both their native **size** and **position**. Moving or resizing one
+member does not drag or resize the others. Switching to a different tab moves the
+tab strip to that active window rather than repositioning the application HWND.
+
+This is not a separate free-floating collection: Windows remain members of the
+same group, with normal tab selection, manual grouping, and group minimize/restore.
+While the setting is active, **Align windows by** is hidden because anchors
+have no effect. Disabling the position option realigns windows to the selected
+anchor while retaining each native size. Disabling independent sizes reverts
+the upstream synchronized size-and-position policy.
+
+The existing group-move handler temporarily parks hidden followers off-screen
+during drag/resize. That parking is **suppressed** when positions are unlocked,
+so finishing a drag does not leave a member stranded. If the setting is changed
+during an ongoing resize, a previously parked follower is restored once at
+move end, before free-position mode takes effect.
+
+The new `GroupOperations` regression verifies the arbitrary follower location
+survives the group's placement update and move/size sequence, then validates
+the relock/resize policy. Its runtime flags are applied per group through the
+same STA-safe settings notifications as independent sizing.
+
+Future **Hide non-selected group windows** is a different policy. It needs
+persistent per-HWND restore locations and explicit lifecycle handling for
+activation, minimize/restore, ungrouping, virtual desktops, and app exit.
+The temporary hide-for-resize behavior alone is not sufficient.
