@@ -168,6 +168,36 @@ let main() =
             check ((stacking() |> List.last)=tab.Handle) "Raise fixture did not start under the other windows"
             window.raise()
             check ((stacking() |> List.head)=tab.Handle) "A raised window under a hidden owner stayed under the others"
+        // Regression: a tab detached while its follower was temporarily parked
+        // must be returned to its original on-screen native position. A move-end
+        // callback isn't guaranteed when the group loses a member or shuts down.
+        do
+            let work = Screen.PrimaryScreen.WorkingArea
+            use parkedForm = new Form(ShowInTaskbar=false,StartPosition=FormStartPosition.Manual,
+                                      Bounds=Drawing.Rectangle(work.Left+140,work.Top+135,420,290))
+            let parkedHwnd = parkedForm.Handle
+            let parkedWindow = OS().windowFromHwnd(parkedHwnd)
+            parkedWindow.showWindow(ShowWindowCommands.SW_SHOWNOACTIVATE)
+            let original = parkedWindow.bounds
+            let parker = obj()
+            FollowerPlacement.queue.claim(parker,parkedHwnd)
+            FollowerPlacement.queue.submit(parker,parkedHwnd,FollowerPlacement.hideRequest parkedHwnd)
+            pumpUntil "Parking worker failed to finish" (fun () -> FollowerPlacement.queue.isIdle(parker))
+            check (parkedWindow.bounds.location<>original.location)
+                  "The parking fixture did not move the window"
+            FollowerPlacement.releaseAndRestore parker parkedHwnd
+            check (parkedWindow.bounds=original)
+                  "Detaching a window left its HWND at the desktop parking corner"
+            let parkerAgain = obj()
+            FollowerPlacement.queue.claim(parkerAgain,parkedHwnd)
+            try
+                FollowerPlacement.queue.submit(parkerAgain,parkedHwnd,FollowerPlacement.hideRequest parkedHwnd)
+                pumpUntil "Second parking worker failed" (fun () -> FollowerPlacement.queue.isIdle(parkerAgain))
+                FollowerPlacement.queue.submit(parkerAgain,parkedHwnd,FollowerPlacement.restoreParkedRequest parkedHwnd)
+                pumpUntil "Explicit unpark worker failed" (fun () -> FollowerPlacement.queue.isIdle(parkerAgain))
+                check (parkedWindow.bounds=original)
+                      "Changing placement mode did not restore the pre-park window position"
+            finally FollowerPlacement.releaseAndRestore parkerAgain parkedHwnd
         // Windows with resize borders of different widths line up by what is seen, as the tabs do.
         do
             use wide = new Form(ShowInTaskbar=false,FormBorderStyle=FormBorderStyle.Sizable,StartPosition=FormStartPosition.Manual,Bounds=Drawing.Rectangle(-20000,-20000,640,420))
