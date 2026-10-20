@@ -455,6 +455,7 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
         match zorderCell.value.where(isMinimized >> not).tryHead with
         | Some(top) -> 
             let window = this.os.windowFromHwnd(top)
+            AltTabFocusTrace.record "group-reassert-foreground" top "makeTopWindowForeground"
             window.setForeground(false)
         | None -> ()
 
@@ -881,6 +882,7 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
                     this.foreground <- this.os.foreground.hwnd
                     isMaximizedExport.update()
         | WinEvent.EVENT_SYSTEM_FOREGROUND ->
+            AltTabFocusTrace.record "group-received-foreground" hwnd ""
             // Activated some other way (Alt+Tab, its own window), an owned tab can stay under the
             // others in the same way as one activated from the strip.
             if this.windows.contains(hwnd) then
