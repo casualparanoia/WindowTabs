@@ -309,6 +309,41 @@ type TabStripDecorator(group:WindowGroup) as this =
                 click = fun() -> Services.program.newTab hwnd
             })
 
+        // A real cascading submenu, like the Windows desktop's New menu:
+        // it never inserts rows into or resizes the parent context menu.
+        let addWindowItem =
+            let currentMembers = group.windows.items.list |> Set.ofList
+            let desktop = VirtualDesktop.groupingDesktopId group.topWindow
+            let candidates =
+                let grouped = Services.desktop.groups.list |> List.collect(fun g -> g.windows.list)
+                let opened = Services.program.appWindows.list @ grouped
+                opened
+                |> List.distinct
+                |> List.filter(fun candidate ->
+                    candidate<>IntPtr.Zero &&
+                    not(Set.contains candidate currentMembers) &&
+                    WinUserApi.IsWindow candidate &&
+                    Services.filter.isTabbableWindow candidate &&
+                    (match desktop,VirtualDesktop.groupingDesktopId candidate with
+                     | Some a,Some b -> a=b
+                     | _ -> true))
+            let windowItem candidate =
+                let window = os.windowFromHwnd(candidate)
+                let label =
+                    let title = window.text.Replace("\t"," ").Replace("\r"," ").Replace("\n"," ").Trim()
+                    let title = if title.Length>84 then title.Substring(0,81)+"…" else title
+                    if title="" then window.pid.appName else window.pid.appName+" — "+title
+                CmiRegular({
+                    text=label;image=None;flags=List2()
+                    click=fun() -> Services.desktop.addWindowToGroup(group.hwnd,candidate)
+                })
+            let items =
+                if candidates.IsEmpty then
+                    [CmiRegular({text=tr Strings.TabMenu.noWindowsToAdd;image=None
+                                 flags=grayed(true);click=ignore})]
+                else candidates |> List.map windowItem
+            CmiPopUp({ text=tr Strings.TabMenu.addWindowToGroup;image=None;items=List2(items) })
+
         let sortTabsItem =
             CmiRegular({
                 text = tr Strings.TabMenu.sortTabs
@@ -464,6 +499,7 @@ type TabStripDecorator(group:WindowGroup) as this =
 
         List2([
             Some(newTabItem)
+            Some(addWindowItem)
             Some(renameTabItem)
             (if group.isRenamed(hwnd) then Some(restoreTabNameItem) else None)
             Some(colorMenu)
