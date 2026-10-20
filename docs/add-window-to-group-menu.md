@@ -5,7 +5,9 @@ This is a conventional cascading native-style flyout, like the Windows desktop
 **New →** menu; it **does not** expand or resize the parent context menu.
 
 The submenu snapshots currently available application windows and includes
-members of other WindowTabs groups. Rows show the app name and window title
+members of other WindowTabs groups. Group membership is read on the main STA
+through the dispatched `IDesktop.memberWindows` accessor, never directly from
+foreign group actors on the tab-strip thread. Rows show the app name and window title
 (truncated for long titles), without fetching large images or application icons
 on the tab-strip thread. It excludes:
 
