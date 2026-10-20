@@ -71,7 +71,14 @@ Look for:
 4. `host-active`: maps selected per-tab proxy HWND on tab changes.
 5. `host-source`: source dimensions before the host fits the active window to
    DWM's requested canvas. A small underlying capture may still look blurred.
-6. Existing `thumbnail-request`, `capture`, `publish`, and
+6. `host-selection-sync`: foreground-marked tab proxy and the saved group
+   z-order initially disagreed, and the host was updated to publish the tab
+   that Explorer actually marked active.
+7. `host-invalidate-active` / `host-invalidate-update`: DWM's response HRESULT
+   when WindowTabs marks a newly active tab or changes the group bounds/members.
+   DWM requests a replacement only when needed, so a successful invalidation
+   need not immediately produce a new `host-thumbnail-request`.
+8. Existing `thumbnail-request`, `capture`, `publish`, and
    `register` stages: verify ordinary Explorer taskbar-hover paths still work.
 
 If PrintWindow produces a 1x1 failure image but there is a previously valid
