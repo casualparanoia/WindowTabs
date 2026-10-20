@@ -115,6 +115,13 @@ module TabNavigation =
         |> Option.bind(fun hwnd -> order |> List.tryFindIndex ((=) hwnd) |> Option.map(fun index -> hwnd,index + (if right then 1 else -1)))
         |> Option.filter(fun (_,index) -> index>=0 && index<order.Length)
 
+/// Foreground WinEvents can be queued on a group's STA. Their HWND is not
+/// necessarily still the foreground window by the time the handler runs.
+/// Never raise an owned window for an event that has already become stale.
+module ForegroundRaisePolicy =
+    let shouldRaise (eventHwnd:IntPtr) (currentHwnd:IntPtr) owned minimized =
+        eventHwnd<>IntPtr.Zero && eventHwnd=currentHwnd && owned && not minimized
+
 module TabOrder =
     /// Each program's tabs side by side, in title order; tabs that tie keep their places.
     let byAppThenTitle (app:'a -> string) (title:'a -> string) (tabs:'a list) =
@@ -882,18 +889,29 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
                     this.foreground <- this.os.foreground.hwnd
                     isMaximizedExport.update()
         | WinEvent.EVENT_SYSTEM_FOREGROUND ->
-            AltTabFocusTrace.record "group-received-foreground" hwnd ""
-            // Activated some other way (Alt+Tab, its own window), an owned tab can stay under the
-            // others in the same way as one activated from the strip.
+            // The WinEvent callback is forwarded asynchronously to this group's
+            // STA. A newer foreground transition may have happened in between;
+            // raising the old *owned* HWND would cover the genuinely active tab
+            // without changing Windows' actual foreground HWND.
+            let actual = this.os.foreground.hwnd
             if this.windows.contains(hwnd) then
                 let window = this.os.windowFromHwnd(hwnd)
-                if window.isOwned && not window.isMinimized then window.raise()
-            this.foreground <- hwnd
-            this.followClosedTab(this.os.foreground.hwnd)
+                if ForegroundRaisePolicy.shouldRaise hwnd actual window.isOwned window.isMinimized then
+                    AltTabFocusTrace.record "group-raise-owned-window" hwnd
+                        (sprintf "actual=%d" (actual.ToInt64()))
+                    window.raise()
+                elif hwnd<>actual then
+                    AltTabFocusTrace.record "group-stale-foreground-ignored" hwnd
+                        (sprintf "actual=%d owned=%b minimized=%b" (actual.ToInt64()) window.isOwned window.isMinimized)
+            // Reflect the OS' *current* state, not an outdated callback argument.
+            this.foreground <- actual
+            this.followClosedTab(actual)
             this.saveZorder()
-            // Windows can hide an owned strip during minimize/restore after our last
-            // update. Reconcile even when focus and tab order have not changed.
-            if this.windows.contains(hwnd) then
+            // Even a stale foreground event can arrive after Windows has
+            // hidden an owned tab strip. Reconcile visibility for any member's
+            // event without granting that member focus or raising its HWND.
+            // The current foreground remains authoritative for tab selection.
+            if this.windows.contains(actual) || this.windows.contains(hwnd) then
                 this.saveTopWindowPlacement()
                 this.updateIsVisible()
             this.ts.refreshShadow()

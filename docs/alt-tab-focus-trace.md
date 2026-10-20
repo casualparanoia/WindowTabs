@@ -47,7 +47,11 @@ Each JSONL line contains UTC, monotonic `elapsedMs`, `attempt`, `stage`,
   foreground briefly, or took focus back after a delay.
 - `group-reassert-foreground`: WindowTabs called its normal group-top
   focus reassertion; compare its HWND with adjacent OS foreground transitions.
-- `group-received-foreground`: one group received a foreground event.
+- `group-raise-owned-window`: a group confirmed an owned window is *still*
+  foreground and is about to raise it in native z-order.
+- `group-stale-foreground-ignored`: a group received a delayed foreground
+  callback for a tab while some **other** HWND is currently foreground; it
+  deliberately does not raise the stale tab (guarded experiment in PR #7).
 - `manual-success` and `manual-failure`: your annotation via F11/F12.
 
 No window titles, URLs, text keystrokes, screenshots, app names or file contents
