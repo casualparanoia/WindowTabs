@@ -219,23 +219,33 @@ type TabCaptures() =
     /// else the last that did. A hidden tab known to print blank is not printed again.
     member this.preview (hwnd:IntPtr) (size:Size) (minimized:bool) (inFront:bool) (capture:unit -> Img) : Img =
         let saved = match captures.TryGetValue hwnd with | true,saved -> Some saved | _ -> None
-        let fromSaved (saved:Bitmap) (size:Size) = Img(TabCaptures.scaled saved size)
+        let fromSaved (saved:Bitmap) =
+            // PrintWindow failure can return a 1x1 image. Its dimensions describe
+            // the failure, not the window, and must never shrink a valid cached frame.
+            let target = if size.Width>0 && size.Height>0 then size else saved.Size
+            Img(TabCaptures.scaled saved target)
+        let trace source (output:Img) =
+            TaskbarPreviewTrace.write "capture-choice" hwnd ""
+                (sprintf "source=%s requested=(%d,%d) result=(%d,%d) saved=%b minimized=%b inFront=%b"
+                    source size.Width size.Height output.width output.height saved.IsSome minimized inFront)
+            output
         match saved with
-        | Some saved when not minimized && not inFront && blank.Contains hwnd -> fromSaved saved size
+        | Some saved when not minimized && not inFront && blank.Contains hwnd ->
+            fromSaved saved |> trace "cached-hidden"
         | _ ->
             let live = capture()
             let shows = not minimized && not(TabCaptures.isBlank live.bitmap)
             if shows then
                 this.remember hwnd live.bitmap
-                live
+                trace "live" live
             else
                 if not minimized then blank.Add hwnd |> ignore
                 match saved with
                 | Some saved ->
-                    let result = fromSaved saved live.bitmap.Size
+                    let result = fromSaved saved
                     live.bitmap.Dispose()
-                    result
-                | None -> live
+                    trace "cached-after-blank" result
+                | None -> trace "uncached-blank" live
 
     /// The tab is in front again and paints, so its next capture is worth taking.
     member this.shown (hwnd:IntPtr) = blank.Remove hwnd |> ignore
@@ -255,6 +265,8 @@ type TabCaptures() =
             blank.Clear()
 
 type TbButton = {
+    /// The front window's taskbar-preview key, even if this group is not foreground.
+    activeKey : string
     icon : Icon
     /// The icons of the group's other apps, front-most first.
     otherIcons : Icon list
@@ -272,7 +284,13 @@ and TbButtonTab = {
     activate : unit -> unit
     close : unit -> unit
     preview : bool -> Img option
+    /// One window's content for native Alt+Tab; no group-sized tab-strip canvas.
+    hostPreview : bool -> Img option
     }
+
+/// The combined group's proxy must use the front tab, not a stale/inactive thumbnail.
+module GroupProxyPreview =
+    let active (info:TbButton) = info.tabs.tryFind(fst >> (=) info.activeKey) |> Option.map snd
 
 type DwmWindow = {
     style: int
@@ -336,9 +354,33 @@ type TaskBarButton(info) as this =
     /// The preview shown as the group's active tab.
     let mutable activeTab = IntPtr.Zero
     let showActive (preview:IntPtr) =
+        let changed = activeTab<>preview
         activeTab <- preview
+        // Registration and native foreground changes are independent of group z-order
+        // notifications. The actual active per-tab proxy is authoritative if they
+        // briefly disagree, so DWM must not capture a different member.
+        let selectedKey =
+            tabWindowsCell.value.items.list
+            |> List.tryPick(fun (key,tab:TaskbarTab) ->
+                if tab.window.hwnd=preview then Some key else None)
+        match infoCell.value,selectedKey with
+        | Some info,Some key when info.activeKey<>key ->
+            infoCell.set(Some {info with activeKey=key})
+            TaskbarPreviewTrace.write "host-selection-sync" this.window.hwnd key
+                (sprintf "previous=%s" info.activeKey)
+        | _ -> ()
+        TaskbarPreviewTrace.write "host-active" this.window.hwnd (selectedKey |> Option.defaultValue "")
+            (sprintf "tabProxy=%d changed=%b" (preview.ToInt64()) changed)
         taskbar.ActivateTab(this.window.hwnd)
         taskbar.SetTabActive(preview,this.window.hwnd,0)
+        // After the shell marks the newly active tab, discard the host's old
+        // iconic bitmap. Updating only the tab registration did not necessarily
+        // cause another native Alt+Tab thumbnail request.
+        if changed then
+            let hr = this.window.dwmInvalidateIconicBitmapsResult()
+            TaskbarPreviewTrace.write "host-invalidate-active" this.window.hwnd
+                (selectedKey |> Option.defaultValue "")
+                (sprintf "HRESULT=0x%08X" hr)
     let rechain = new System.Windows.Forms.Timer(Interval=400)
     do rechain.Tick.Add(fun _ ->
         if not (thumbnailsShown()) then
@@ -390,14 +432,49 @@ type TaskBarButton(info) as this =
                     | _ ->
                         msg.def()
                 | WindowMessages.WM_CLOSE -> 0
+                | WindowMessages.WM_DWMSENDICONICTHUMBNAIL ->
+                    let current = config()
+                    let host = _os.windowFromHwnd(msg.hwnd)
+                    TaskbarPreviewTrace.write "host-thumbnail-request" msg.hwnd current.activeKey
+                        (sprintf "max=%A" msg.lParam.size.record)
+                    if not msg.lParam.size.isEmptyArea then
+                        TaskbarPreview.send
+                            (fun () -> GroupProxyPreview.active current |> Option.bind(fun tab -> tab.hostPreview(true)))
+                            (TaskbarPreview.centre msg.lParam.size)
+                            (fun image ->
+                                let hr = host.dwmPublishIconicThumbnail image
+                                TaskbarPreviewTrace.write "host-thumbnail-publish" msg.hwnd current.activeKey
+                                    (sprintf "HRESULT=0x%08X size=%A" hr image.size.record))
+                    0
                 | WindowMessages.WM_DWMSENDICONICLIVEPREVIEWBITMAP ->
-                    TaskbarPreviewTrace.write "host-request" msg.hwnd "" ""
-                    msg.def()
+                    let current = config()
+                    let host = _os.windowFromHwnd(msg.hwnd)
+                    // DWM rejects a bitmap larger than the proxy's actual client rect.
+                    let limit = current.bounds.size.intersect(host.clientSize)
+                    TaskbarPreviewTrace.write "host-live-request" msg.hwnd current.activeKey
+                        (sprintf "client=%A limit=%A" host.clientSize.record limit.record)
+                    if not limit.isEmptyArea then
+                        TaskbarPreview.send
+                            (fun () -> GroupProxyPreview.active current |> Option.bind(fun tab -> tab.hostPreview(false)))
+                            (TaskbarPreview.centre limit)
+                            (fun image ->
+                                let hr = host.dwmPublishIconicLivePreview image
+                                TaskbarPreviewTrace.write "host-live-publish" msg.hwnd current.activeKey
+                                    (sprintf "HRESULT=0x%08X size=%A" hr image.size.record))
+                    0
                 | WindowMessages.WM_NCCALCSIZE -> 0
                 | _ -> msg.def()
         } 
                 
         window.setAppId(appId)
+        // The main group proxy is itself the Alt+Tab candidate. Per-tab windows already
+        // advertise iconic bitmaps, but that does not make the *host* publish its own.
+        window.dwmSetAttribute DWMWINDOWATTRIBUTE.DWMWA_FORCE_ICONIC_REPRESENTATION 1
+        window.dwmSetAttribute DWMWINDOWATTRIBUTE.DWMWA_HAS_ICONIC_BITMAP 1
+        TaskbarPreviewTrace.write "host-created" window.hwnd ""
+            (sprintf "style=0x%X exStyle=0x%X owner=%d" (window.style.ToInt64())
+                (window.styleEx.ToInt64())
+                (WinUserApi.GetWindow(window.hwnd,GetWindowConstants.GW_OWNER).ToInt64()))
         //the taskbar button does not appear consistently unless the window is visible
         //need to show here instead of setting WS_VISIBLE so that the invisible preview window doesn't steal active focus
         window.showNoActivate()
@@ -415,6 +492,8 @@ type TaskBarButton(info) as this =
     member this.window : Window = _window.Force()
 
     member this.invalidate() =
+        // This host bitmap is separate from Explorer's per-tab hover bitmaps.
+        this.window.dwmInvalidateIconicBitmaps()
         tabWindowsCell.value.values.iter <| fun (tab:TaskbarTab) ->
             tab.invalidate()
 
@@ -452,6 +531,11 @@ type TaskBarButton(info) as this =
 
         let prevInfo = infoCell.value
         infoCell.set(Some(info))
+        // Invalidate after moving/registering all windows below. DWM caches the host's
+        // bitmap independently of its tabs and does not track membership or size edits.
+        let previewChanged = prevInfo |> Option.exists(fun previous ->
+            previous.activeKey<>info.activeKey || previous.bounds<>info.bounds ||
+            previous.tabs.map(fst).list<>info.tabs.map(fst).list)
 
         // Notify the shell before the group releases its previous icon copies.
         let sameIcons (badged:TaskbarBadgedIcon) =
@@ -498,6 +582,13 @@ type TaskBarButton(info) as this =
             sendTabOrder()
             resendTabOrder.Stop()
             resendTabOrder.Start()
+        if previewChanged then
+            let hr = this.window.dwmInvalidateIconicBitmapsResult()
+            TaskbarPreviewTrace.write "host-invalidate-update" this.window.hwnd info.activeKey
+                (sprintf "HRESULT=0x%08X bounds=%b membership=%b active=%b" hr
+                    (prevInfo |> Option.exists(fun previous -> previous.bounds<>info.bounds))
+                    (prevInfo |> Option.exists(fun previous -> previous.tabs.map(fst).list<>info.tabs.map(fst).list))
+                    (prevInfo |> Option.exists(fun previous -> previous.activeKey<>info.activeKey)))
        
     /// The order was just changed and is to be sent again.
     member this.isResendingTabOrder = resendTabOrder.Enabled
@@ -591,9 +682,20 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
                 | WindowMessages.WM_DWMSENDICONICTHUMBNAIL ->
                     parent.releasePreviews()
                     let msgWindow = os.windowFromHwnd(msg.hwnd)
-                    TaskbarPreviewTrace.write "thumbnail-request" msg.hwnd key ""
-                    TaskbarPreview.send (fun () -> config().preview(true))
-                        (TaskbarPreview.centre msg.lParam.size) msgWindow.dwmSetIconicThumbnail
+                    TaskbarPreviewTrace.write "tab-thumbnail-request" msg.hwnd key
+                        (sprintf "host=%d max=%A" (parent.window.hwnd.ToInt64()) msg.lParam.size.record)
+                    if not msg.lParam.size.isEmptyArea then
+                        TaskbarPreview.send
+                            (fun () ->
+                                let image = config().preview(true)
+                                TaskbarPreviewTrace.write "tab-thumbnail-source" msg.hwnd key
+                                    (sprintf "source=%A" (image |> Option.map(fun img -> img.size.record)))
+                                image)
+                            (TaskbarPreview.centre msg.lParam.size)
+                            (fun image ->
+                                let hr = msgWindow.dwmPublishIconicThumbnail image
+                                TaskbarPreviewTrace.write "tab-thumbnail-publish" msg.hwnd key
+                                    (sprintf "HRESULT=0x%08X size=%A" hr image.size.record))
                     msg.def()
                 | WindowMessages.WM_DWMSENDICONICLIVEPREVIEWBITMAP ->
                     parent.releasePreviews()
@@ -619,6 +721,11 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
 
     // Owned by the group's taskbar window, except while the group's thumbnails are up: see
     // TaskBarButton.releasePreviews.
+    do TaskbarPreviewTrace.write "tab-proxy-created" _window.hwnd key
+        (sprintf "host=%d style=0x%X exStyle=0x%X owner=%d"
+            (parent.window.hwnd.ToInt64()) (_window.style.ToInt64())
+            (_window.styleEx.ToInt64())
+            (WinUserApi.GetWindow(_window.hwnd,GetWindowConstants.GW_OWNER).ToInt64()))
 
     member this.adoptWindow hwnd =
         if WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)<>_window.hwnd then
@@ -631,6 +738,10 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
                 WinUserApi.SetWindowPos(_window.hwnd,hwnd,0,0,0,0,
                     SetWindowPosFlags.SWP_NOMOVE ||| SetWindowPosFlags.SWP_NOSIZE ||| SetWindowPosFlags.SWP_NOACTIVATE) |> ignore)
         ownedWindow <- hwnd
+        TaskbarPreviewTrace.write "tab-member-owned" _window.hwnd key
+            (sprintf "member=%d owner=%d"
+                (hwnd.ToInt64())
+                (WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER).ToInt64()))
 
     /// Destroying an owner also destroys its owned windows; a preview never owns their lifetime.
     member private this.releaseOwnedWindow() =
@@ -875,6 +986,7 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
                 let topTab = Tab(top)
                 let chosen = this.chosenIcon top
                 let tbButtonInfo = {
+                    activeKey = TaskBarButton.key top
                     text = this.ts.tabInfo(topTab).text
                     bounds = previewBounds
                     // A chosen picture stands alone: it is the point, not the apps inside.
@@ -901,6 +1013,17 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
                             close = fun() -> 
                                 let (Tab(hwnd)) = tab
                                 this.os.windowFromHwnd(hwnd).close()
+                            hostPreview = fun _ ->
+                                try
+                                    let window = this.os.windowFromHwnd(hwnd)
+                                    let area = if window.isMinimized then this.wtGroup.previewArea else window.bounds
+                                    let image = captures.preview hwnd area.size.Size window.isMinimized
+                                                    (this.zorder.tryHead=Some hwnd)
+                                                    (fun () -> this.ts.tabInfo(tab).preview())
+                                    TaskbarPreviewTrace.write "host-source" hwnd (TaskBarButton.key hwnd)
+                                        (sprintf "source=%A group=%A" image.size.record previewBounds.size.record)
+                                    Some image
+                                with _ -> None
                             preview = fun(isThumbnail) -> 
                                 try
                                     let (Tab(hwnd)) = tab

@@ -807,12 +807,14 @@ let main() =
             // changed order is sent again once settled.
             do
                 let previewRequests = ResizeArray<string * bool>()
+                let hostPreviewRequests = ResizeArray<string>()
                 let mutable previewActivations = 0
                 let tab text : string * TbButtonTab =
                     text, { icon=Drawing.SystemIcons.Application; text=text; activate=(fun () -> previewActivations <- previewActivations+1); close=ignore
-                            preview=fun thumbnail -> previewRequests.Add(text,thumbnail); Some(Img(Sz(320,200))) }
+                            preview=fun thumbnail -> previewRequests.Add(text,thumbnail); Some(Img(Sz(320,200)))
+                            hostPreview=fun _ -> hostPreviewRequests.Add(text); Some(Img(Sz(320,200))) }
                 let info texts : TbButton =
-                    { icon=Drawing.SystemIcons.Application; otherIcons=[]; text="Order"; bounds=Rect(Pt(-20000,-20000),Sz(320,200))
+                    { activeKey=List.head texts; icon=Drawing.SystemIcons.Application; otherIcons=[]; text="Order"; bounds=Rect(Pt(-20000,-20000),Sz(320,200))
                       activate=ignore; toggleMinimizeRestore=ignore; close=ignore; tabs=List2(texts |> List.map tab) }
                 let button = new TaskBarButton(info ["a";"b"])
                 try
@@ -820,6 +822,19 @@ let main() =
                     let previewOwner key = WinUserApi.GetWindow((button.tryTabWindow key).Value.hwnd,GetWindowConstants.GW_OWNER)
                     check (["a";"b"] |> List.forall(fun key -> previewOwner key=button.window.hwnd))
                         "A tab preview is not owned by the group's taskbar window"
+                    // The foreground tab can change after a z-order snapshot. The host's
+                    // iconic bitmap must follow the tab actually marked active.
+                    let requestHostThumbnail() =
+                        // HIWORD is requested width; LOWORD is requested height.
+                        let requestSize = IntPtr((200 <<< 16) ||| 113)
+                        WinUserApi.SendMessage(button.window.hwnd,
+                            WindowMessages.WM_DWMSENDICONICTHUMBNAIL,IntPtr.Zero,requestSize) |> ignore
+                    button.markActive((button.tryTabWindow "b").Value.hwnd)
+                    requestHostThumbnail()
+                    button.markActive((button.tryTabWindow "a").Value.hwnd)
+                    requestHostThumbnail()
+                    check (List.ofSeq hostPreviewRequests=["b";"a"])
+                          "The host preview ignored the tab selected by the shell" 
                     pumpUntil "First preview order was not sent again" (fun () -> not button.isResendingTabOrder)
                     button.update(info ["a";"b";"c"])
                     button.update(info ["a";"b"])

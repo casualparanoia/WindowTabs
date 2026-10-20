@@ -286,11 +286,20 @@ and
 
     member this.dwmSetIconicLivePreview (image:Img) = this.dwmPublishIconicLivePreview image |> ignore
 
-    member this.dwmSetIconicThumbnail (image:Img) =
+    /// DWM copies the bitmap before returning; our HBITMAP remains ours to release.
+    member this.dwmPublishIconicThumbnail (image:Img) =
         if os.isWin7OrHigher then
             let hbitmap = image.hbitmap
-            try DwmApi.DwmSetIconicThumbnail(hwnd, hbitmap, 0) |> ignore
+            try
+                let result = DwmApi.DwmSetIconicThumbnail(hwnd, hbitmap, 0)
+                if result<0 then
+                    Diagnostics.Trace.TraceWarning("DWM thumbnail rejected: HRESULT=0x{0:X8}, bitmap={1}",result,image.size)
+                result
             finally WinGdiApi.DeleteObject(hbitmap) |> ignore
+        else 0
+
+    member this.dwmSetIconicThumbnail (image:Img) =
+        this.dwmPublishIconicThumbnail image |> ignore
 
     member this.style = WinUserApi.GetWindowLong(hwnd, WindowLongFieldOffset.GWL_STYLE)
     member this.styleEx = WinUserApi.GetWindowLong(hwnd, WindowLongFieldOffset.GWL_EXSTYLE)
@@ -562,9 +571,12 @@ and
         
     member this.setAppId appId = Win32Helper.SetWindowAppId(hwnd, appId) |> ignore
     
-    member this.dwmInvalidateIconicBitmaps() = 
-        if os.isWin7OrHigher then
-            DwmApi.DwmInvalidateIconicBitmaps(hwnd) |> ignore
+    member this.dwmInvalidateIconicBitmapsResult() =
+        if os.isWin7OrHigher then DwmApi.DwmInvalidateIconicBitmaps(hwnd)
+        else 0
+
+    member this.dwmInvalidateIconicBitmaps() =
+        this.dwmInvalidateIconicBitmapsResult() |> ignore
 
     member this.dwmSetAttribute attribute value =
         if os.isWin7OrHigher then

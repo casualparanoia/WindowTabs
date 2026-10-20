@@ -13,6 +13,44 @@ let disposed (bitmap:Bitmap) =
     with :? ArgumentException -> true
 
 let main() =
+    // DWM asks the combined *host* for a preview, not the registered child tab.
+    // The host must choose the current front tab, and not retain a previous tab's delegate.
+    let requested = ResizeArray<string>()
+    let requestedHost = ResizeArray<string>()
+    let tab key = key, {
+        icon = SystemIcons.Application
+        text = key
+        activate = (fun () -> ())
+        close = (fun () -> ())
+        preview = (fun _ ->
+            requested.Add(key)
+            Some(Img(Sz(48,32))))
+        hostPreview = (fun _ ->
+            requestedHost.Add(key)
+            Some(Img(Sz(192,108)))) }
+    let configuration front = {
+        activeKey = front
+        icon = SystemIcons.Application
+        otherIcons = []
+        text = "Group"
+        bounds = Rect(Pt(0,0),Sz(48,32))
+        activate = (fun () -> ())
+        toggleMinimizeRestore = (fun () -> ())
+        tabs = List2([tab "first"; tab "second"])
+        close = (fun () -> ()) }
+    for front in ["first";"second";"first"] do
+        let mutable published = false
+        TaskbarPreview.send
+            (fun () -> GroupProxyPreview.active (configuration front) |> Option.bind(fun active -> active.hostPreview(true)))
+            (TaskbarPreview.centre (Sz(120,80)))
+            (fun image ->
+                check (image.size=Sz(120,80)) "Host thumbnail violated DWM's requested dimensions"
+                published <- true)
+        check published "The active tab did not supply the host thumbnail"
+    check (List.ofSeq requestedHost = ["first";"second";"first"] && requested.Count=0)
+          "Combined host reused the group-sized tab-strip preview instead of the active window"
+    check ((GroupProxyPreview.active (configuration "missing")).IsNone)
+          "A stale active tab key selected another, potentially hidden tab"
     let changes = ResizeArray<IntPtr * bool>()
     let mutable shell = IntPtr(1)
     let visibility = TaskbarVisibility(changes.Add,shellIdentity=(fun () -> shell))
@@ -301,6 +339,15 @@ let main() =
     let printedAgain = captures.preview hwnd size false false (print (fun () -> drawn (Sz(1600,1000))))
     check (printed = before + 1) "A tab that was in front again was not printed"
     printedAgain.bitmap.Dispose()
+    // PrintWindow may fail with a 1x1 bitmap despite an intact native window.
+    // A saved frame must retain the requested window size, not adopt that bad size.
+    let failedPrint = solidImage (Sz(1,1)) Color.Black
+    let recovered = captures.preview hwnd size false true (fun () -> failedPrint)
+    check (disposed failedPrint.bitmap &&
+           recovered.bitmap.Width=1600 && recovered.bitmap.Height=1000 &&
+           recovered.bitmap.GetPixel(800,500).ToArgb()=Color.SeaGreen.ToArgb())
+          "A 1x1 PrintWindow failure shrank the saved frame instead of keeping the window dimensions"
+    recovered.bitmap.Dispose()
     captures.forget hwnd
     let unknown = solidImage (Sz(64,48)) Color.Black
     let withoutCapture = captures.preview hwnd (Size(64,48)) false false (fun () -> unknown)
