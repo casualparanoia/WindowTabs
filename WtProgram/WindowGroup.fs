@@ -757,7 +757,8 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
             let bounds,wp,visible = placement.value.Value
             let below = zorderCell.value.tryHead |> Option.filter((<>) hwnd)
             let request =
-                if keepSizes then FollowerPlacement.alignPositionRequest hwnd visible below sizeAnchor
+                if positionUnlocked() then FollowerPlacement.restoreParkedRequest hwnd
+                elif keepSizes then FollowerPlacement.alignPositionRequest hwnd visible below sizeAnchor
                 else FollowerPlacement.alignFrameRequest hwnd bounds visible wp below
             FollowerPlacement.queue.submit(placementOwner,hwnd,request)
             // Maximize/snap can hide or cover the owned strip after its early events.
@@ -808,7 +809,9 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
 
     member this.onEnterMoveSize() =
         if not inMoveSize.value then
-            parkedDuringMove <- not(positionUnlocked())
+            // Independent-size windows should not be parked off-screen during a drag.
+            // Hiding non-selected tabs needs a separate, explicit policy.
+            parkedDuringMove <- not keepSizes
             inMoveSize.set(true)
             // Unlocked follower windows remain at the user's locations.
             if parkedDuringMove then this.hideChildWindows()
@@ -1010,7 +1013,7 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
             let foreground = this.os.foreground.hwnd
             let next = TabNavigation.closeTarget this.lorder.list isOpen hwnd foreground lastActiveTab opener (this.leftOnClose hwnd)
             if opener |> Option.exists(fun (tab,owner) -> tab=hwnd || owner=hwnd) then opener <- None
-            FollowerPlacement.queue.release(placementOwner,hwnd)
+            FollowerPlacement.releaseAndRestore placementOwner hwnd
             //CASE 777 - chrome windows can close when you merge a single chrome tab
             //into another chrome group, need to exit the move/size and restore windows on screen in this case
             if inMoveSize.value then
@@ -1096,7 +1099,7 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
             isDestroyed.set(true)
             placementCompletion |> Option.iter(fun subscription -> subscription.Dispose())
             placementCompletion <- None
-            this.windows.items.iter(fun hwnd -> FollowerPlacement.queue.release(placementOwner,hwnd))
+            this.windows.items.iter(fun hwnd -> FollowerPlacement.releaseAndRestore placementOwner hwnd)
             lock locationGate (fun () -> pendingLocations.Clear())
             minimizeStateTimer.Dispose()
             pendingMinimizeStates.Clear()
