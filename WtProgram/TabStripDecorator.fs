@@ -315,7 +315,7 @@ type TabStripDecorator(group:WindowGroup) as this =
             let currentMembers = group.windows.items.list |> Set.ofList
             let desktop = VirtualDesktop.groupingDesktopId group.topWindow
             let candidates =
-                let grouped = Services.desktop.groups.list |> List.collect(fun g -> g.windows.list)
+                let grouped = Services.desktop.memberWindows.list
                 let opened = Services.program.appWindows.list @ grouped
                 opened
                 |> List.distinct
