@@ -682,9 +682,20 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
                 | WindowMessages.WM_DWMSENDICONICTHUMBNAIL ->
                     parent.releasePreviews()
                     let msgWindow = os.windowFromHwnd(msg.hwnd)
-                    TaskbarPreviewTrace.write "thumbnail-request" msg.hwnd key ""
-                    TaskbarPreview.send (fun () -> config().preview(true))
-                        (TaskbarPreview.centre msg.lParam.size) msgWindow.dwmSetIconicThumbnail
+                    TaskbarPreviewTrace.write "tab-thumbnail-request" msg.hwnd key
+                        (sprintf "host=%d max=%A" (parent.window.hwnd.ToInt64()) msg.lParam.size.record)
+                    if not msg.lParam.size.isEmptyArea then
+                        TaskbarPreview.send
+                            (fun () ->
+                                let image = config().preview(true)
+                                TaskbarPreviewTrace.write "tab-thumbnail-source" msg.hwnd key
+                                    (sprintf "source=%A" (image |> Option.map(fun img -> img.size.record)))
+                                image)
+                            (TaskbarPreview.centre msg.lParam.size)
+                            (fun image ->
+                                let hr = msgWindow.dwmPublishIconicThumbnail image
+                                TaskbarPreviewTrace.write "tab-thumbnail-publish" msg.hwnd key
+                                    (sprintf "HRESULT=0x%08X size=%A" hr image.size.record))
                     msg.def()
                 | WindowMessages.WM_DWMSENDICONICLIVEPREVIEWBITMAP ->
                     parent.releasePreviews()
@@ -710,6 +721,11 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
 
     // Owned by the group's taskbar window, except while the group's thumbnails are up: see
     // TaskBarButton.releasePreviews.
+    do TaskbarPreviewTrace.write "tab-proxy-created" _window.hwnd key
+        (sprintf "host=%d style=0x%X exStyle=0x%X owner=%d"
+            (parent.window.hwnd.ToInt64()) (_window.style.ToInt64())
+            (_window.styleEx.ToInt64())
+            (WinUserApi.GetWindow(_window.hwnd,GetWindowConstants.GW_OWNER).ToInt64()))
 
     member this.adoptWindow hwnd =
         if WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)<>_window.hwnd then
@@ -722,6 +738,10 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
                 WinUserApi.SetWindowPos(_window.hwnd,hwnd,0,0,0,0,
                     SetWindowPosFlags.SWP_NOMOVE ||| SetWindowPosFlags.SWP_NOSIZE ||| SetWindowPosFlags.SWP_NOACTIVATE) |> ignore)
         ownedWindow <- hwnd
+        TaskbarPreviewTrace.write "tab-member-owned" _window.hwnd key
+            (sprintf "member=%d owner=%d"
+                (hwnd.ToInt64())
+                (WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER).ToInt64()))
 
     /// Destroying an owner also destroys its owned windows; a preview never owns their lifetime.
     member private this.releaseOwnedWindow() =
