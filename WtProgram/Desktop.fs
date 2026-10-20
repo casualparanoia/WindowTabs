@@ -221,6 +221,24 @@ type Desktop(notify:IDesktopNotification, settings:ISettings, dispatcher:IDispat
         |> Option.iter(fun g -> this.rebuildGroup(g, (fun () -> enableSuperBar), true))
 
     /// Groups follow the setting unless their tab menu chose for them.
+    /// A tab-menu operation, executed on the main STA by DispatchedDesktop.
+    /// Transfer an HWND only after its old group has finished native cleanup.
+    member private this.addWindowToExistingGroup(groupHwnd:IntPtr, hwnd:IntPtr) =
+        if WinUserApi.IsWindow hwnd && Services.filter.isTabbableWindow hwnd then
+            this.groups.tryFind(fun g -> g.hwnd=groupHwnd && not g.isExited && not g.isRetiring)
+            |> Option.iter(fun target ->
+                if not((target :> IGroup).windows.contains((=) hwnd)) then
+                    let source = this.groups.tryFind(fun g ->
+                        not g.isExited && (g :> IGroup).windows.contains((=) hwnd))
+                    // The requested grouping is manual. This prevents auto-group
+                    // and explicit app rules from immediately undoing the move.
+                    target.invokeGroup(fun() -> target.group.isManual <- true)
+                    match source with
+                    | Some other when not(obj.ReferenceEquals(other,target)) ->
+                        target.addAfterDetaching(other,hwnd)
+                    | None -> (target :> IGroup).addWindow(hwnd,false)
+                    | _ -> ())
+
     member private this.combineTaskbarIcons(enabled) =
         let wanted() = settings.getValue("combineIconsInTaskbar").cast<bool>()
         let groups = this.groups.where(fun g -> not g.isExited && not g.isRetiring && not g.isTaskbarChosen && g.isSuperBarEnabled <> enabled)
@@ -233,6 +251,7 @@ type Desktop(notify:IDesktopNotification, settings:ISettings, dispatcher:IDispat
         member x.isEmpty = this.isEmpty
         member x.createGroup(enableSuperBar) = this.createGroup(enableSuperBar)
         member x.restartGroup(hwnd, enableSuperBar) = this.restartGroup(hwnd, enableSuperBar)
+        member x.addWindowToGroup(groupHwnd, hwnd) = this.addWindowToExistingGroup(groupHwnd,hwnd)
         member x.groups = this.groups.where(fun(g) -> g.isExited.not).map(fun(g) -> g.cast<IGroup>())
         member x.groupExited = exitedEvent.Publish
         member x.groupRemoved = removedEvent.Publish
