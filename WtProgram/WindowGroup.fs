@@ -907,9 +907,11 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
             this.foreground <- actual
             this.followClosedTab(actual)
             this.saveZorder()
-            // The currently active tab, if in this group, may need its strip
-            // reconciled even when the callback HWND was already stale.
-            if this.windows.contains(actual) then
+            // Even a stale foreground event can arrive after Windows has
+            // hidden an owned tab strip. Reconcile visibility for any member's
+            // event without granting that member focus or raising its HWND.
+            // The current foreground remains authoritative for tab selection.
+            if this.windows.contains(actual) || this.windows.contains(hwnd) then
                 this.saveTopWindowPlacement()
                 this.updateIsVisible()
             this.ts.refreshShadow()
