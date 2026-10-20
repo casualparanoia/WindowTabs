@@ -360,7 +360,7 @@ type TaskBarButton(info) as this =
         // notifications. The actual active per-tab proxy is authoritative if they
         // briefly disagree, so DWM must not capture a different member.
         let selectedKey =
-            tabWindowsCell.value.items
+            tabWindowsCell.value.items.list
             |> List.tryPick(fun (key,tab:TaskbarTab) ->
                 if tab.window.hwnd=preview then Some key else None)
         match infoCell.value,selectedKey with
