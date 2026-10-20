@@ -9,6 +9,24 @@ type GeneralView() =
         SettingsBindings.toggleRow startup "launch-at-sign-in"
         let behaviour = SettingsUi.sectionCard table (tr Strings.General.tabBehavior)
         SettingsBindings.toggleRow behaviour "dim-inactive-groups"
+        let keepSizes = SettingsBindings.settingToggle "keepIndividualWindowSizes"
+        SettingsUi.settingRow behaviour "keep-individual-window-sizes" keepSizes
+        let corner words = String.concat " · " (List.map tr words)
+        let anchor = SettingsBindings.choiceRow behaviour "individual-window-anchor"
+                        [| corner [Strings.Common.top;Strings.Common.left]
+                           corner [Strings.Common.top;Strings.Common.center]
+                           corner [Strings.Common.top;Strings.Common.right]
+                           corner [Strings.Common.center;Strings.Common.left]
+                           tr Strings.Common.center
+                           corner [Strings.Common.center;Strings.Common.right]
+                           corner [Strings.Common.bottom;Strings.Common.left]
+                           corner [Strings.Common.bottom;Strings.Common.center]
+                           corner [Strings.Common.bottom;Strings.Common.right] |]
+        let anchorRow = anchor.Parent :?> SettingsRow
+        SettingsUi.indentDependentRow anchorRow
+        let updateAnchor() = anchorRow.Collapsed <- not keepSizes.Checked
+        updateAnchor()
+        keepSizes.CheckedChanged.Add(fun _ -> updateAnchor())
         let position = SettingsBindings.choiceRow behaviour "tab-position"
                            [|tr Strings.TabMenu.top;tr Strings.Common.left;tr Strings.Common.right|]
         let alignment = SettingsBindings.choiceRow behaviour "tab-alignment"

@@ -75,6 +75,19 @@ type HelperWindow() =
         if message.Msg <> 0x2E0 then base.WndProc(&message)
 
 let main() =
+    // The shared visible-frame anchor stays stable across unlike window sizes.
+    let frame = Rect(Pt(100,200),Sz(500,400))
+    let own = Rect(Pt(0,0),Sz(200,100))
+    let visible = Rect(Pt(5,4),Sz(190,90))
+    let target = WindowSizeAnchor.target
+    check (target "TopLeft" frame own visible = Rect(Pt(95,196),own.size))
+          "Top-left anchor changed its backward-compatible placement"
+    check (target "Center" frame own visible = Rect(Pt(250,351),own.size))
+          "Centre anchor lost the native visible-frame border adjustment"
+    check (target "BottomRight" frame own visible = Rect(Pt(405,506),own.size))
+          "Bottom-right anchor used the wrong corner"
+    check (WindowSizeAnchor.normalize "unsupported"="TopLeft")
+          "Unknown anchors did not safely fall back to top-left"
     // Lasts until the test process exits.
     Timer.timeBeginPeriod 1u |> ignore
     // Hold a native-like call in flight, then replace its queued successors and
@@ -439,6 +452,53 @@ let main() =
                 check (Win32Helper.GetMinMaxAnimation()=animationPreference) "Maximize changed the user's animation preference"
                 onGroup(fun group -> applyPlacement group ShowWindowCommands.SW_SHOWNORMAL)
                 pumpUntil(fun () -> onGroup(fun group -> group.isPlacementIdle))
+                if count=2 then
+                    // Turning on independent sizes affects existing groups immediately.
+                    // The chosen follower has a different native size. Moving/resizing the
+                    // group must not give it the source's dimensions, and switching back
+                    // to synchronized mode must apply the old group-wide behavior.
+                    api.setValue("keepIndividualWindowSizes",box true)
+                    pumpUntil(fun () -> onGroup(fun group -> group.keepsIndividualWindowSizes))
+                    let follower = onGroup(fun group -> group.zorder.value.tail.head)
+                    onHelper(fun () ->
+                        OS().windowFromHwnd(follower).move(Rect(Pt(-20000,-20000),Sz(520,360))))
+                    let ownSize = OS().windowFromHwnd(follower).bounds.size
+                    check (ownSize=Sz(520,360)) "The independent-size test did not establish unequal native window sizes"
+                    let newBounds = Rect(Pt(-19970,-19980),Sz(620,470))
+                    onGroup(fun group ->
+                        setBounds group newBounds
+                        invoke "updatePlacements" group [||] |> ignore)
+                    waitOperation()
+                    let following = OS().windowFromHwnd(follower)
+                    let origin = onGroup(fun group -> group.bounds.value.Value.location)
+                    check (following.bounds.size=ownSize)
+                          "Position-only group placement resized a follower with independent sizes enabled"
+                    check (following.visibleBounds.location=origin)
+                          "Independent-size placement did not share the active window's visible-frame origin"
+                    // During a user drag the group temporarily parks followers off
+                    // screen using SW_SHOWNOACTIVATE (not SW_SHOWNORMAL).
+                    // Moving the group after that must restore both position and size.
+                    onHelper(fun () -> OS().windowFromHwnd(follower).hideOffScreen(None))
+                    check (following.visibleBounds.location<>origin)
+                          "The follower was not parked before move-end recovery"
+                    onGroup(fun group -> invoke "updatePlacements" group [||] |> ignore)
+                    waitOperation()
+                    check (following.bounds.size=ownSize && following.visibleBounds.location=origin)
+                          "Independent mode failed to return a parked follower after moving the group"
+                    api.setValue("individualWindowAnchor",box "Center")
+                    let centered = onGroup(fun group ->
+                        let frame = group.bounds.value.Value
+                        let real,seen = following.bounds,following.visibleBounds
+                        WindowSizeAnchor.target "Center" frame real seen)
+                    pumpUntil(fun () -> following.bounds.location=centered.location)
+                    check (following.bounds.size=ownSize)
+                          "Changing the alignment anchor resized an independently sized follower"
+                    api.setValue("individualWindowAnchor",box "TopLeft")
+                    pumpUntil(fun () -> following.visibleBounds.location=origin)
+                    api.setValue("keepIndividualWindowSizes",box false)
+                    pumpUntil(fun () -> onGroup(fun group -> not group.keepsIndividualWindowSizes && group.isPlacementIdle))
+                    check (following.bounds.size=newBounds.size)
+                          "Turning independent sizes off did not return to synchronized group dimensions"
                 if count=5 then
                     samples "5tabs-selection-info-responsive" 30 (fun group index ->
                         invoke "setTabInfo" group [|box handles.[index%5]|] |> ignore)

@@ -131,6 +131,17 @@ module Strings =
         let enableTabsByDefault = { caption={ en="Use tabs for new apps"; zh="新应用自动启用标签"; ja="新しいアプリでタブを使う" }
                                     description={ en="Only apps first discovered after this change. Existing apps keep their tab setting."; zh="只影响此后首次出现的应用。已有应用保留原来的标签设置。"; ja="変更後に初めて検出するアプリに適用します。既存のアプリのタブ設定は維持します。" }
                                     keywords={ en=""; zh=""; ja="" } }
+        let keepIndividualWindowSizes = {
+            caption={ en="Keep individual window sizes"; zh="保留每个窗口的大小"; ja="ウィンドウごとのサイズを保持" }
+            description={
+                en="When switching tabs or moving a group, keep each window's dimensions. Grouped windows still share a screen position. Maximized and minimized windows retain their native states."
+                zh="切换标签或移动分组时保留每个窗口自己的大小。分组窗口仍共用屏幕位置。最大化和最小化状态保持不变。"
+                ja="タブの切り替えやグループの移動時にも各ウィンドウの大きさを保持します。画面上の位置は共有し、最大化・最小化状態は維持します。" }
+            keywords={ en="independent separate per-tab resize dimensions"; zh="独立 尺寸 缩放"; ja="個別 サイズ 変更" } }
+        let individualWindowAnchor = {
+            caption={ en="Align windows by"; zh="窗口对齐基准"; ja="ウィンドウの整列位置" }
+            description={ en="Use the same corner or centre point of each window when sizes differ."; zh="不同尺寸的窗口对齐相同的角或中心点。"; ja="サイズが違うウィンドウの角または中心を合わせます。" }
+            keywords={ en="anchor position origin corner center centre"; zh="锚点 角 中心"; ja="アンカー 角 中央" } }
         let dimInactiveGroups = { caption={ en="Dim tabs in inactive groups"; zh="淡化非活动分组的标签"; ja="非アクティブなグループのタブの色を薄くする" }
                                   description={ en="Make the active group easier to spot."; zh="让当前活动的分组更容易辨认。"; ja="アクティブなグループを見分けやすくします。" }
                                   keywords={ en="fade"; zh="变暗"; ja="薄く 暗く" } }

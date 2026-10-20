@@ -31,6 +31,8 @@ type SettingsRec = {
     appearance: AppearancePreferences
     runAtStartup: bool
     hideInactiveTabs: bool
+    keepIndividualWindowSizes: bool
+    individualWindowAnchor: string
     enableTabbingByDefault: bool
     replaceAltTab: bool
     groupWindowsInSwitcher: bool
