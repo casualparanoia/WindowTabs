@@ -72,6 +72,7 @@
     <Compile Include="Shared\NumberShortcutRules.fs" />
     <Compile Include="Shared\AppGroupingRules.fs" />
     <Compile Include="Shared\RuntimeDiagnostics.fs" />
+    <Compile Include="Shared\AltTabFocusTrace.fs" />
     <Compile Include="Shared\Theme.fs" />
     <Compile Include="Shared\ThemePresets.fs" />
     <Compile Include="Shared\ThemeService.fs" />
