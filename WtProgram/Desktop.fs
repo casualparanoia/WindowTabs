@@ -38,6 +38,10 @@ type GroupInfo(enableSuperBar, settings:ISettings, desktopDispatcher:IDispatcher
     let initialAppearance = ThemeService.currentAppearance()
     // Capture on the caller's main thread, which the group constructor blocks.
     let keepSizes = unbox<bool> (settings.getValue "keepIndividualWindowSizes")
+    let keepPositions =
+        match settings.getValue "keepIndividualWindowPositions" with
+        | :? bool as value -> value
+        | _ -> false
     let initialAnchor =
         match settings.getValue "individualWindowAnchor" with
         | :? string as value -> WindowSizeAnchor.normalize value
@@ -51,7 +55,7 @@ type GroupInfo(enableSuperBar, settings:ISettings, desktopDispatcher:IDispatcher
             ])
         let plugins = plugins.choose(id)
 
-        let _group = WindowGroup(enableSuperBar, plugins, initialAppearance, keepIndividualWindowSizes=keepSizes, individualWindowAnchor=initialAnchor)
+        let _group = WindowGroup(enableSuperBar, plugins, initialAppearance, keepIndividualWindowSizes=keepSizes, individualWindowAnchor=initialAnchor, keepIndividualWindowPositions=keepPositions)
         _group.exited.Add <| fun _ ->
             System.Threading.Volatile.Write(&_isExited,1)
             Application.ExitThread()
