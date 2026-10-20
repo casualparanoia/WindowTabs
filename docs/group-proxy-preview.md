@@ -74,6 +74,14 @@ Look for:
 6. Existing `thumbnail-request`, `capture`, `publish`, and
    `register` stages: verify ordinary Explorer taskbar-hover paths still work.
 
+If PrintWindow produces a 1x1 failure image but there is a previously valid
+capture, fallback now uses the known native window size, **not** the failed
+image's 1x1 size. This is regression-tested in `TaskbarPreview`. The opt-in
+`capture-choice` trace stage distinguishes `live`, `cached-hidden`,
+`cached-after-blank`, and `uncached-blank`, with requested and resulting
+pixel dimensions. A black first capture without prior usable cache remains
+an unresolved case.
+
 A blank initial capture (especially a Chromium/Electron window that cannot be
 printed while hidden) cannot be fixed by centring or invalidation alone.
 WindowTabs retains a previous non-blank capture up to 800 px on its longest side,
