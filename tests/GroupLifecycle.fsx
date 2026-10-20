@@ -48,6 +48,20 @@ let main() =
     check (merge "away" ["big";"small";"other"]=None && merge "unknown" ["big"]=None && merge "big" ["unknown";"away"]=None)
           "Automatic groups merged across virtual desktops, programs, or with an unknown desktop"
     check (pickFrom [unknownGroup] 5=None) "Two unresolved windows were assumed to share a desktop"
+    // Native EVENT_SYSTEM_FOREGROUND callbacks are delivered asynchronously.
+    // A stale owned-window callback must never trigger a SetWindowPos raise
+    // over the newer foreground window (Alt+Tab can visibly fail otherwise).
+    let oldHwnd,newHwnd = IntPtr(1001),IntPtr(2002)
+    check (ForegroundRaisePolicy.shouldRaise newHwnd newHwnd true false)
+          "An owned current foreground window could not be raised"
+    check (not(ForegroundRaisePolicy.shouldRaise oldHwnd newHwnd true false))
+          "Stale foreground callback would raise the old owned window"
+    check (not(ForegroundRaisePolicy.shouldRaise oldHwnd IntPtr.Zero true false))
+          "A lost foreground should not raise an inactive group member"
+    check (not(ForegroundRaisePolicy.shouldRaise newHwnd newHwnd false false))
+          "An unowned tab unexpectedly entered the owned-window raise path"
+    check (not(ForegroundRaisePolicy.shouldRaise newHwnd newHwnd true true))
+          "A minimized tab unexpectedly entered the owned-window raise path"
     Application.EnableVisualStyles()
     let directory = Path.Combine(__SOURCE_DIRECTORY__, "Debug", "groups-" + Guid.NewGuid().ToString("N"))
     Directory.CreateDirectory(directory) |> ignore
