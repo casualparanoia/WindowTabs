@@ -219,23 +219,33 @@ type TabCaptures() =
     /// else the last that did. A hidden tab known to print blank is not printed again.
     member this.preview (hwnd:IntPtr) (size:Size) (minimized:bool) (inFront:bool) (capture:unit -> Img) : Img =
         let saved = match captures.TryGetValue hwnd with | true,saved -> Some saved | _ -> None
-        let fromSaved (saved:Bitmap) (size:Size) = Img(TabCaptures.scaled saved size)
+        let fromSaved (saved:Bitmap) =
+            // PrintWindow failure can return a 1x1 image. Its dimensions describe
+            // the failure, not the window, and must never shrink a valid cached frame.
+            let target = if size.Width>0 && size.Height>0 then size else saved.Size
+            Img(TabCaptures.scaled saved target)
+        let trace source (output:Img) =
+            TaskbarPreviewTrace.write "capture-choice" hwnd ""
+                (sprintf "source=%s requested=(%d,%d) result=(%d,%d) saved=%b minimized=%b inFront=%b"
+                    source size.Width size.Height output.width output.height saved.IsSome minimized inFront)
+            output
         match saved with
-        | Some saved when not minimized && not inFront && blank.Contains hwnd -> fromSaved saved size
+        | Some saved when not minimized && not inFront && blank.Contains hwnd ->
+            fromSaved saved |> trace "cached-hidden"
         | _ ->
             let live = capture()
             let shows = not minimized && not(TabCaptures.isBlank live.bitmap)
             if shows then
                 this.remember hwnd live.bitmap
-                live
+                trace "live" live
             else
                 if not minimized then blank.Add hwnd |> ignore
                 match saved with
                 | Some saved ->
-                    let result = fromSaved saved live.bitmap.Size
+                    let result = fromSaved saved
                     live.bitmap.Dispose()
-                    result
-                | None -> live
+                    trace "cached-after-blank" result
+                | None -> trace "uncached-blank" live
 
     /// The tab is in front again and paints, so its next capture is worth taking.
     member this.shown (hwnd:IntPtr) = blank.Remove hwnd |> ignore
