@@ -354,10 +354,33 @@ type TaskBarButton(info) as this =
     /// The preview shown as the group's active tab.
     let mutable activeTab = IntPtr.Zero
     let showActive (preview:IntPtr) =
+        let changed = activeTab<>preview
         activeTab <- preview
-        TaskbarPreviewTrace.write "host-active" this.window.hwnd "" (sprintf "tabProxy=%d" (preview.ToInt64()))
+        // Registration and native foreground changes are independent of group z-order
+        // notifications. The actual active per-tab proxy is authoritative if they
+        // briefly disagree, so DWM must not capture a different member.
+        let selectedKey =
+            tabWindowsCell.value.items
+            |> List.tryPick(fun (key,tab:TaskbarTab) ->
+                if tab.window.hwnd=preview then Some key else None)
+        match infoCell.value,selectedKey with
+        | Some info,Some key when info.activeKey<>key ->
+            infoCell.set(Some {info with activeKey=key})
+            TaskbarPreviewTrace.write "host-selection-sync" this.window.hwnd key
+                (sprintf "previous=%s" info.activeKey)
+        | _ -> ()
+        TaskbarPreviewTrace.write "host-active" this.window.hwnd (selectedKey |> Option.defaultValue "")
+            (sprintf "tabProxy=%d changed=%b" (preview.ToInt64()) changed)
         taskbar.ActivateTab(this.window.hwnd)
         taskbar.SetTabActive(preview,this.window.hwnd,0)
+        // After the shell marks the newly active tab, discard the host's old
+        // iconic bitmap. Updating only the tab registration did not necessarily
+        // cause another native Alt+Tab thumbnail request.
+        if changed then
+            let hr = this.window.dwmInvalidateIconicBitmapsResult()
+            TaskbarPreviewTrace.write "host-invalidate-active" this.window.hwnd
+                (selectedKey |> Option.defaultValue "")
+                (sprintf "HRESULT=0x%08X" hr)
     let rechain = new System.Windows.Forms.Timer(Interval=400)
     do rechain.Tick.Add(fun _ ->
         if not (thumbnailsShown()) then
@@ -559,7 +582,13 @@ type TaskBarButton(info) as this =
             sendTabOrder()
             resendTabOrder.Stop()
             resendTabOrder.Start()
-        if previewChanged then this.window.dwmInvalidateIconicBitmaps()
+        if previewChanged then
+            let hr = this.window.dwmInvalidateIconicBitmapsResult()
+            TaskbarPreviewTrace.write "host-invalidate-update" this.window.hwnd info.activeKey
+                (sprintf "HRESULT=0x%08X bounds=%b membership=%b active=%b"
+                    (prevInfo |> Option.exists(fun previous -> previous.bounds<>info.bounds))
+                    (prevInfo |> Option.exists(fun previous -> previous.tabs.map(fst).list<>info.tabs.map(fst).list))
+                    (prevInfo |> Option.exists(fun previous -> previous.activeKey<>info.activeKey)))
        
     /// The order was just changed and is to be sent again.
     member this.isResendingTabOrder = resendTabOrder.Enabled
