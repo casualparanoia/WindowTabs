@@ -191,6 +191,7 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
     let mutable logicalAppearance = initialAppearance
     let mutable appearanceSnapshot = logicalAppearance.scaled
     let mutable keepSizes = defaultArg keepIndividualWindowSizes false
+    let mutable sizeAnchor = WindowSizeAnchor.normalize (Services.settings.getValue("individualWindowAnchor") :?> string)
 
     let isDestroyed = Cell.create(false)
     let zorderCell = Cell.create(List2<IntPtr>())
@@ -344,6 +345,14 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
                         // group's active window. Enabling independence never resizes tabs.
                         if not enabled then this.adjustChildWindows()))
         exitedEvent.Publish.Add(fun _ -> sizePolicySubscription.Dispose())
+        let anchorSubscription = Services.settings.notifyValue "individualWindowAnchor" (fun value ->
+            this.invokeAsync(fun () ->
+                if not isDestroyed.value then
+                    let selected = WindowSizeAnchor.normalize (unbox<string> value)
+                    if selected<>sizeAnchor then
+                        sizeAnchor <- selected
+                        if keepSizes then this.adjustChildWindows()))
+        exitedEvent.Publish.Add(fun _ -> anchorSubscription.Dispose())
         let colorModeSubscription = Services.settings.notifyValue "tabColorMode" (fun _ ->
             this.invokeAsync(fun() -> if not isDestroyed.value then this.refreshTabColors()))
         exitedEvent.Publish.Add(fun _ -> colorModeSubscription.Dispose())
@@ -732,7 +741,7 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
             let bounds,wp,visible = placement.value.Value
             let below = zorderCell.value.tryHead |> Option.filter((<>) hwnd)
             let request =
-                if keepSizes then FollowerPlacement.alignPositionRequest hwnd visible below
+                if keepSizes then FollowerPlacement.alignPositionRequest hwnd visible below sizeAnchor
                 else FollowerPlacement.alignFrameRequest hwnd bounds visible wp below
             FollowerPlacement.queue.submit(placementOwner,hwnd,request)
             // Maximize/snap can hide or cover the owned strip after its early events.
