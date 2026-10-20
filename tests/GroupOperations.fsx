@@ -775,14 +775,28 @@ let main() =
             // native owner before another group adopts the exact same HWND.
             // Run this after the placement benchmarks so it doesn't affect them.
             let memberHwnd = handles.Head
+            let seedHwnd = handles.[1]
             let destination = (desktop :> IDesktop).createGroup(false)
+            let destinationInfo = destination :?> GroupInfo
+            // An empty group has no TabStrip/HWND yet: the actual menu always
+            // belongs to an existing group with at least one window. Establish
+            // that real precondition, preserving another member as the target
+            // while the tested HWND moves in and out.
+            destinationInfo.addAfterDetaching(info,seedHwnd)
+            pumpUntil(fun () ->
+                destination.windows.contains((=)seedHwnd) &&
+                not((info :> IGroup).windows.contains((=)seedHwnd)))
+            let destinationHwnd = destination.hwnd
             manualEligible.Add(memberHwnd) |> ignore
             try
-                (desktop :> IDesktop).addWindowToGroup(destination.hwnd,memberHwnd)
+                (desktop :> IDesktop).addWindowToGroup(destinationHwnd,memberHwnd)
                 pumpUntil(fun () ->
                     destination.windows.contains((=)memberHwnd) &&
                     not((info :> IGroup).windows.contains((=)memberHwnd)))
-                check ((destination :?> GroupInfo).group.isManual)
+                let mutable manual = None
+                destinationInfo.invokeGroup(fun () -> manual <- Some destinationInfo.group.isManual)
+                pumpUntil(fun () -> manual.IsSome)
+                check (manual=Some true)
                       "Explicit context-menu transfer was not recorded as manual grouping"
                 (desktop :> IDesktop).addWindowToGroup(info.hwnd,memberHwnd)
                 pumpUntil(fun () ->
@@ -792,6 +806,14 @@ let main() =
                       "Reattaching from another group was not recognized as manual"
             finally
                 manualEligible.Remove(memberHwnd) |> ignore
+                // Restore the seed and any transferred member even if an
+                // assertion failed, so the existing fixture cleans up cleanly.
+                for candidate in [memberHwnd;seedHwnd] do
+                    if destination.windows.contains((=)candidate) then
+                        info.addAfterDetaching(destinationInfo,candidate)
+                pumpUntil(fun () ->
+                    (info :> IGroup).windows.contains((=)seedHwnd) &&
+                    (info :> IGroup).windows.contains((=)memberHwnd))
                 destination.destroy()
                 pumpUntil(fun () -> desktop.retainedGroupCount=1)
             printfn "PASS: grouped order, normal placement, maximize followers, minimize/restore, stale events, explicit menu transfer and controlled slow application. Measurements exclude real input and DWM."
