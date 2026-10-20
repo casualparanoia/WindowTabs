@@ -120,3 +120,41 @@ proxy: that risks breaking input, focus and desktop isolation.
 After testing, remove the trace toggle by deleting `peek-trace.enabled`
 from the application directory. Tracing logs HWNDs and sizes, not
 window titles or image contents.
+
+
+## Native Alt+Tab HWND ownership investigation (2026-10-20)
+
+The latest native Windows screenshots still show black, blurry, undersized or stale tiles
+**even when** `host-thumbnail-publish` returned `HRESULT=0` for a sizeable live
+capture. They are *not* Windows Snap Group entries. A successful DWM publication
+is necessary but insufficient evidence that Alt+Tab ultimately displays that bitmap.
+
+The proxy model has three distinct HWNDs for each member:
+
+1. The real app HWND (the actual application's window).
+2. A per-tab layered proxy HWND registered using `ITaskbarList3.RegisterTab`;
+   it can own the app HWND and has its own iconic thumbnail callback.
+3. The group's `WS_EX_APPWINDOW` layered, nonactivating host HWND with its own
+   iconic thumbnail callback.
+
+The opt-in `peek-trace.jsonl` now also emits these native provenance stages:
+`tab-proxy-created` (styles, host, owner), `tab-member-owned` (app HWND,
+owner), `tab-thumbnail-request` (which per-tab proxy and requested size),
+`tab-thumbnail-source` (bitmap dimensions), and `tab-thumbnail-publish`
+(DWM HRESULT). Compare them with `host-created`, `host-active`,
+`host-invalidate-*`, `host-thumbnail-request`, and
+`host-thumbnail-publish`.
+
+### Reproduction matrix
+
+Use two native windows with combined taskbar icon enabled. Switch A to B and
+back; open native Alt+Tab each time; remove B; retest. Keep taskbar hover
+distinct from native Alt+Tab and AltTabby. For each bad tile, note whether a
+`host-` or `tab-thumbnail-` request/publish occurred and whether the image
+was cached, live or uncached blank. If **neither** callback ran for that tile,
+the next experiment must identify which HWND native Alt+Tab actually renders
+by native window enumeration (not by more heuristic DWM invalidation).
+
+Do not adjust `WS_EX_LAYERED`, `WS_EX_APPWINDOW`, ownership, or native
+capture mode all at once; do one controlled A/B experiment after mapping
+the HWND. Automation validates source behavior, not the final shell surface.
