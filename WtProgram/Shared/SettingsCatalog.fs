@@ -33,6 +33,7 @@ module SettingsCatalog =
         { id="launch-at-sign-in"; page=GeneralSettings; text=Strings.Settings.launchAtSignIn; binding=Toggle("runAtStartup",true,false) }
         { id="enable-tabs-for-new-apps"; page=ProgramSettings; text=Strings.Settings.enableTabsByDefault; binding=Toggle("enableTabbingByDefault",true,false) }
         { id="dim-inactive-groups"; page=GeneralSettings; text=Strings.Settings.dimInactiveGroups; binding=Toggle("hideInactiveTabs",true,false) }
+        { id="keep-individual-window-sizes"; page=GeneralSettings; text=Strings.Settings.keepIndividualWindowSizes; binding=Toggle("keepIndividualWindowSizes",false,false) }
         { id="tab-alignment"; page=GeneralSettings; text=Strings.Settings.tabAlignment; binding=Choice("alignment",["Left";"Center";"Right"],"Center") }
         { id="tab-position"; page=GeneralSettings; text=Strings.Settings.tabPosition; binding=Choice("tabPosition",["Horizontal";"Left";"Right"],"Horizontal") }
         { id="tabColumnWidth"; page=AppearanceSettings; text=Strings.Settings.tabColumnWidth; binding=Number(columnWidthRange) }
