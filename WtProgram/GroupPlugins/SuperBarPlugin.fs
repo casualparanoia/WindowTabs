@@ -585,7 +585,7 @@ type TaskBarButton(info) as this =
         if previewChanged then
             let hr = this.window.dwmInvalidateIconicBitmapsResult()
             TaskbarPreviewTrace.write "host-invalidate-update" this.window.hwnd info.activeKey
-                (sprintf "HRESULT=0x%08X bounds=%b membership=%b active=%b"
+                (sprintf "HRESULT=0x%08X bounds=%b membership=%b active=%b" hr
                     (prevInfo |> Option.exists(fun previous -> previous.bounds<>info.bounds))
                     (prevInfo |> Option.exists(fun previous -> previous.tabs.map(fst).list<>info.tabs.map(fst).list))
                     (prevInfo |> Option.exists(fun previous -> previous.activeKey<>info.activeKey)))
