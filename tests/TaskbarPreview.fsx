@@ -339,6 +339,15 @@ let main() =
     let printedAgain = captures.preview hwnd size false false (print (fun () -> drawn (Sz(1600,1000))))
     check (printed = before + 1) "A tab that was in front again was not printed"
     printedAgain.bitmap.Dispose()
+    // PrintWindow may fail with a 1x1 bitmap despite an intact native window.
+    // A saved frame must retain the requested window size, not adopt that bad size.
+    let failedPrint = solidImage (Sz(1,1)) Color.Black
+    let recovered = captures.preview hwnd size false true (fun () -> failedPrint)
+    check (disposed failedPrint.bitmap &&
+           recovered.bitmap.Width=1600 && recovered.bitmap.Height=1000 &&
+           recovered.bitmap.GetPixel(800,500).ToArgb()=Color.SeaGreen.ToArgb())
+          "A 1x1 PrintWindow failure shrank the saved frame instead of keeping the window dimensions"
+    recovered.bitmap.Dispose()
     captures.forget hwnd
     let unknown = solidImage (Sz(64,48)) Color.Black
     let withoutCapture = captures.preview hwnd (Size(64,48)) false false (fun () -> unknown)
