@@ -165,7 +165,7 @@ type GroupMenuChoices = {
     alignments: (TabDirection * Bemo.TabAlignment) list
     autoHideMode: string option }
 
-type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:TabAppearanceInfo, ?keepIndividualWindowSizes:bool, ?individualWindowAnchor:string) as this =
+type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:TabAppearanceInfo, ?keepIndividualWindowSizes:bool, ?individualWindowAnchor:string, ?keepIndividualWindowPositions:bool) as this =
     let Cell = CellScope(true)
     let inputOwnership = Collections.Generic.Dictionary<IntPtr,bool>()
     let _bb = Blackboard()
@@ -191,6 +191,8 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
     let mutable logicalAppearance = initialAppearance
     let mutable appearanceSnapshot = logicalAppearance.scaled
     let mutable keepSizes = defaultArg keepIndividualWindowSizes false
+    let mutable keepPositions = defaultArg keepIndividualWindowPositions false
+    let positionUnlocked() = keepSizes && keepPositions
     // The creating STA reads settings before blocking on group thread startup.
     // A group must never synchronously query the main settings dispatcher here.
     let mutable sizeAnchor = WindowSizeAnchor.normalize (defaultArg individualWindowAnchor "TopLeft")
@@ -204,6 +206,8 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
     let windowsCell = Cell.create(Set2())
     let _ts = ref None 
     let inMoveSize = Cell.create(false)
+    // Followers parked before a setting change must be restored once at move end.
+    let mutable parkedDuringMove = false
     let foregroundCell = Cell.create(_os.foreground.hwnd)
     let prevForegroundCell = ref None
     let mutable lastActiveTab : IntPtr option = None
@@ -257,6 +261,7 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
 
     member this.isSuperBarEnabled = enableSuperBar
     member this.keepsIndividualWindowSizes = keepSizes
+    member this.keepsIndividualWindowPositions = positionUnlocked()
     /// A tab was dragged into it, or it was made by dragging a tab out: only such groups are
     /// remembered after their windows close, as rules and auto grouping remake the others.
     member this.isManual
@@ -347,13 +352,22 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
                         // group's active window. Enabling independence never resizes tabs.
                         if not enabled then this.adjustChildWindows()))
         exitedEvent.Publish.Add(fun _ -> sizePolicySubscription.Dispose())
+        let positionPolicySubscription = Services.settings.notifyValue "keepIndividualWindowPositions" (fun value ->
+            this.invokeAsync(fun () ->
+                if not isDestroyed.value then
+                    let previouslyUnlocked = positionUnlocked()
+                    keepPositions <- unbox<bool> value
+                    // Re-locking immediately realigns positions without resizing
+                    // if independent sizing is still enabled.
+                    if previouslyUnlocked && not(positionUnlocked()) then this.adjustChildWindows()))
+        exitedEvent.Publish.Add(fun _ -> positionPolicySubscription.Dispose())
         let anchorSubscription = Services.settings.notifyValue "individualWindowAnchor" (fun value ->
             this.invokeAsync(fun () ->
                 if not isDestroyed.value then
                     let selected = WindowSizeAnchor.normalize (unbox<string> value)
                     if selected<>sizeAnchor then
                         sizeAnchor <- selected
-                        if keepSizes then this.adjustChildWindows()))
+                        if keepSizes && not(positionUnlocked()) then this.adjustChildWindows()))
         exitedEvent.Publish.Add(fun _ -> anchorSubscription.Dispose())
         let colorModeSubscription = Services.settings.notifyValue "tabColorMode" (fun _ ->
             this.invokeAsync(fun() -> if not isDestroyed.value then this.refreshTabColors()))
@@ -739,7 +753,7 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
             match requestedMinimizeStates.TryGetValue(hwnd) with
             | true,expected -> this.os.windowFromHwnd(hwnd).isMinimized<>expected && FollowerPlacement.isChangingMinimizeState placementOwner hwnd
             | _ -> false
-        if placement.value.IsSome && not changingMinimizeState then
+        if placement.value.IsSome && not changingMinimizeState && (not(positionUnlocked()) || parkedDuringMove) then
             let bounds,wp,visible = placement.value.Value
             let below = zorderCell.value.tryHead |> Option.filter((<>) hwnd)
             let request =
@@ -793,14 +807,20 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
         
 
     member this.onEnterMoveSize() =
-        inMoveSize.set(true)
-        this.hideChildWindows()
+        if not inMoveSize.value then
+            parkedDuringMove <- not(positionUnlocked())
+            inMoveSize.set(true)
+            // Unlocked follower windows remain at the user's locations.
+            if parkedDuringMove then this.hideChildWindows()
         this.updateIsVisible()
 
     member this.onExitMoveSize() =
         inMoveSize.set(false)
         this.saveTopWindowPlacement()
+        // A follower parked before the setting changed still needs restoring,
+        // even though unlocked mode normally skips group alignment.
         this.adjustChildWindows()
+        parkedDuringMove <- false
         this.makeTopWindowForeground()
         this.updateIsVisible()
 
