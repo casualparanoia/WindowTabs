@@ -439,6 +439,33 @@ let main() =
                 check (Win32Helper.GetMinMaxAnimation()=animationPreference) "Maximize changed the user's animation preference"
                 onGroup(fun group -> applyPlacement group ShowWindowCommands.SW_SHOWNORMAL)
                 pumpUntil(fun () -> onGroup(fun group -> group.isPlacementIdle))
+                if count=2 then
+                    // Turning on independent sizes affects existing groups immediately.
+                    // The chosen follower has a different native size. Moving/resizing the
+                    // group must not give it the source's dimensions, and switching back
+                    // to synchronized mode must apply the old group-wide behavior.
+                    api.setValue("keepIndividualWindowSizes",box true)
+                    pumpUntil(fun () -> onGroup(fun group -> group.keepsIndividualWindowSizes))
+                    let source,follower = onGroup(fun group -> group.topWindow,group.zorder.value.tail.head)
+                    onHelper(fun () ->
+                        OS().windowFromHwnd(follower).move(Rect(Pt(-20000,-20000),Sz(520,360))))
+                    let ownSize = OS().windowFromHwnd(follower).bounds.size
+                    check (ownSize=Sz(520,360)) "The independent-size test did not establish unequal native window sizes"
+                    let newBounds = Rect(Pt(-19970,-19980),Sz(620,470))
+                    onGroup(fun group ->
+                        setBounds group newBounds
+                        invoke "updatePlacements" group [||] |> ignore)
+                    waitOperation()
+                    let following = OS().windowFromHwnd(follower)
+                    let head = OS().windowFromHwnd(source)
+                    check (following.bounds.size=ownSize)
+                          "Position-only group placement resized a follower with independent sizes enabled"
+                    check (following.visibleBounds.location=head.visibleBounds.location)
+                          "Independent-size placement did not share the active window's visible-frame origin"
+                    api.setValue("keepIndividualWindowSizes",box false)
+                    pumpUntil(fun () -> onGroup(fun group -> not group.keepsIndividualWindowSizes && group.isPlacementIdle))
+                    check (following.bounds.size=newBounds.size)
+                          "Turning independent sizes off did not return to synchronized group dimensions"
                 if count=5 then
                     samples "5tabs-selection-info-responsive" 30 (fun group index ->
                         invoke "setTabInfo" group [|box handles.[index%5]|] |> ignore)
