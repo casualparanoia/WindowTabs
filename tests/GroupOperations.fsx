@@ -462,6 +462,16 @@ let main() =
                           "Position-only group placement resized a follower with independent sizes enabled"
                     check (following.visibleBounds.location=origin)
                           "Independent-size placement did not share the active window's visible-frame origin"
+                    // During a user drag the group temporarily parks followers off
+                    // screen using SW_SHOWNOACTIVATE (not SW_SHOWNORMAL).
+                    // Moving the group after that must restore both position and size.
+                    onHelper(fun () -> OS().windowFromHwnd(follower).hideOffScreen(None))
+                    check (following.visibleBounds.location<>origin)
+                          "The follower was not parked before move-end recovery"
+                    onGroup(fun group -> invoke "updatePlacements" group [||] |> ignore)
+                    waitOperation()
+                    check (following.bounds.size=ownSize && following.visibleBounds.location=origin)
+                          "Independent mode failed to return a parked follower after moving the group"
                     api.setValue("keepIndividualWindowSizes",box false)
                     pumpUntil(fun () -> onGroup(fun group -> not group.keepsIndividualWindowSizes && group.isPlacementIdle))
                     check (following.bounds.size=newBounds.size)
