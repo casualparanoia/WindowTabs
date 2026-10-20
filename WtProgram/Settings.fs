@@ -142,6 +142,7 @@ type Settings(isStandAlone, ?saveDelay:int) as this =
                         runAtStartup = settingsJson.getBool("runAtStartup").def(SettingsCatalog.toggleDefault "runAtStartup" hasExistingSettings)
                         hideInactiveTabs = settingsJson.getBool("hideInactiveTabs").def(SettingsCatalog.toggleDefault "hideInactiveTabs" hasExistingSettings)
                         keepIndividualWindowSizes = settingsJson.getBool("keepIndividualWindowSizes").def(SettingsCatalog.toggleDefault "keepIndividualWindowSizes" hasExistingSettings)
+                        individualWindowAnchor = settingsJson.getString("individualWindowAnchor").def(SettingsCatalog.choiceDefault "individualWindowAnchor") |> SettingsCatalog.normalizeChoice "individualWindowAnchor"
                         enableTabbingByDefault = settingsJson.getBool("enableTabbingByDefault").def(SettingsCatalog.toggleDefault "enableTabbingByDefault" hasExistingSettings)
                         combineIconsInTaskbar = settingsJson.getBool("combineIconsInTaskbar").def(SettingsCatalog.toggleDefault "combineIconsInTaskbar" hasExistingSettings)
                         replaceAltTab = settingsJson.getBool("replaceAltTab").def(SettingsCatalog.toggleDefault "replaceAltTab" hasExistingSettings)
@@ -235,6 +236,7 @@ type Settings(isStandAlone, ?saveDelay:int) as this =
             settingsJson.setBool("runAtStartup", settings.runAtStartup)
             settingsJson.setBool("hideInactiveTabs", settings.hideInactiveTabs)
             settingsJson.setBool("keepIndividualWindowSizes", settings.keepIndividualWindowSizes)
+            settingsJson.setString("individualWindowAnchor", settings.individualWindowAnchor)
             settingsJson.setBool("enableTabbingByDefault", settings.enableTabbingByDefault)
             settingsJson.setBool("combineIconsInTaskbar", settings.combineIconsInTaskbar)
             settingsJson.setBool("replaceAltTab", settings.replaceAltTab)
@@ -310,7 +312,7 @@ type Settings(isStandAlone, ?saveDelay:int) as this =
             let api = x :> ISettings
             let value = if key="tabSearchScope" then box(SettingsCatalog.normalizeTabSearchScope (unbox value)) else value
             let value = if key="numberLeaderKeys" then box(NumberLeaderKeys.normalize (unbox value)) else value
-            let value = if key="alignment" || key="language" || key="autoHideMode" || key="switcherStyle" || key="numberHotKeyModifier" || key="tabColorStyle" || key="tabColorMode" || key="tabPosition" then box(SettingsCatalog.normalizeChoice key (unbox value)) else value
+            let value = if key="alignment" || key="language" || key="autoHideMode" || key="switcherStyle" || key="numberHotKeyModifier" || key="tabColorStyle" || key="tabColorMode" || key="tabPosition" || key="individualWindowAnchor" then box(SettingsCatalog.normalizeChoice key (unbox value)) else value
             let value = if key="tabColumnWidth" then box(between SettingsCatalog.columnWidthRange (unbox<int> value)) else value
             match key with
             | "tabAppearance" ->
