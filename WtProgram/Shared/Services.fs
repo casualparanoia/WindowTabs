@@ -69,6 +69,7 @@ type DispatchedDesktop(inner:IDesktop, dispatcher:IDispatcher) =
         member _.restartGroup(hwnd, enabled) = dispatcher.Post(fun () -> inner.restartGroup(hwnd, enabled))
         member _.addWindowToGroup(groupHwnd, windowHwnd) = dispatcher.Post(fun () -> inner.addWindowToGroup(groupHwnd, windowHwnd))
         member _.groups = dispatcher.Send(fun () -> inner.groups)
+        member _.memberWindows = dispatcher.Send(fun () -> inner.memberWindows)
         member _.groupExited = dispatcher.Send(fun () -> inner.groupExited)
         member _.groupRemoved = dispatcher.Send(fun () -> inner.groupRemoved)
         member _.groupChanged = dispatcher.Send(fun () -> inner.groupChanged)
