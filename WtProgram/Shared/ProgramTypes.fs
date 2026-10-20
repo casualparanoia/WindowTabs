@@ -158,6 +158,8 @@ type IDesktop =
     abstract member isEmpty : bool
     abstract member createGroup: bool -> IGroup
     abstract member restartGroup: IntPtr * bool -> unit
+    /// An explicit move requested by the tab menu.
+    abstract member addWindowToGroup: IntPtr * IntPtr -> unit
     abstract member groups : List2<IGroup>
     abstract member groupExited: IEvent<IGroup>
     abstract member groupRemoved: IEvent<IGroup>
