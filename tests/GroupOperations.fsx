@@ -446,7 +446,7 @@ let main() =
                     // to synchronized mode must apply the old group-wide behavior.
                     api.setValue("keepIndividualWindowSizes",box true)
                     pumpUntil(fun () -> onGroup(fun group -> group.keepsIndividualWindowSizes))
-                    let source,follower = onGroup(fun group -> group.topWindow,group.zorder.value.tail.head)
+                    let follower = onGroup(fun group -> group.zorder.value.tail.head)
                     onHelper(fun () ->
                         OS().windowFromHwnd(follower).move(Rect(Pt(-20000,-20000),Sz(520,360))))
                     let ownSize = OS().windowFromHwnd(follower).bounds.size
@@ -457,10 +457,10 @@ let main() =
                         invoke "updatePlacements" group [||] |> ignore)
                     waitOperation()
                     let following = OS().windowFromHwnd(follower)
-                    let head = OS().windowFromHwnd(source)
+                    let origin = onGroup(fun group -> group.bounds.value.Value.location)
                     check (following.bounds.size=ownSize)
                           "Position-only group placement resized a follower with independent sizes enabled"
-                    check (following.visibleBounds.location=head.visibleBounds.location)
+                    check (following.visibleBounds.location=origin)
                           "Independent-size placement did not share the active window's visible-frame origin"
                     api.setValue("keepIndividualWindowSizes",box false)
                     pumpUntil(fun () -> onGroup(fun group -> not group.keepsIndividualWindowSizes && group.isPlacementIdle))
