@@ -1,8 +1,10 @@
 name: build
 
 on:
+  # Run the same Windows checks on fork feature pushes, even when no PR workflow
+  # has been approved. Draft PRs continue to receive pull_request checks.
   push:
-    branches: [main]
+    branches: [main, 'feature/**', 'integration/**']
   pull_request:
   workflow_dispatch:
 
