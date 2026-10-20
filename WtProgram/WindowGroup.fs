@@ -165,7 +165,7 @@ type GroupMenuChoices = {
     alignments: (TabDirection * Bemo.TabAlignment) list
     autoHideMode: string option }
 
-type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:TabAppearanceInfo, ?keepIndividualWindowSizes:bool) as this =
+type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:TabAppearanceInfo, ?keepIndividualWindowSizes:bool, ?individualWindowAnchor:string) as this =
     let Cell = CellScope(true)
     let inputOwnership = Collections.Generic.Dictionary<IntPtr,bool>()
     let _bb = Blackboard()
@@ -191,7 +191,9 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
     let mutable logicalAppearance = initialAppearance
     let mutable appearanceSnapshot = logicalAppearance.scaled
     let mutable keepSizes = defaultArg keepIndividualWindowSizes false
-    let mutable sizeAnchor = WindowSizeAnchor.normalize (Services.settings.getValue("individualWindowAnchor") :?> string)
+    // The creating STA reads settings before blocking on group thread startup.
+    // A group must never synchronously query the main settings dispatcher here.
+    let mutable sizeAnchor = WindowSizeAnchor.normalize (defaultArg individualWindowAnchor "TopLeft")
 
     let isDestroyed = Cell.create(false)
     let zorderCell = Cell.create(List2<IntPtr>())
