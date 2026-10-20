@@ -253,6 +253,7 @@ type Desktop(notify:IDesktopNotification, settings:ISettings, dispatcher:IDispat
         member x.restartGroup(hwnd, enableSuperBar) = this.restartGroup(hwnd, enableSuperBar)
         member x.addWindowToGroup(groupHwnd, hwnd) = this.addWindowToExistingGroup(groupHwnd,hwnd)
         member x.groups = this.groups.where(fun(g) -> g.isExited.not).map(fun(g) -> g.cast<IGroup>())
+        member x.memberWindows = List2(this.groups.list |> List.filter(fun g -> not g.isExited) |> List.collect(fun g -> (g :> IGroup).windows.list))
         member x.groupExited = exitedEvent.Publish
         member x.groupRemoved = removedEvent.Publish
         member x.groupChanged = changedEvent.Publish
