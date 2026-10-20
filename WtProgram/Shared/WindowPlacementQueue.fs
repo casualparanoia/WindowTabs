@@ -202,7 +202,10 @@ module FollowerPlacement =
                     if valid() && not window.isMinimized && not(parked.ContainsKey hwnd) then
                         let original = window.bounds
                         window.hideOffScreen(None)
-                        if valid() then
+                        // Release may cancel the request while native SetWindowPlacement
+                        // is in progress. Still record the result so releaseAndRestore
+                        // can recover the window immediately after this worker exits.
+                        if WinUserApi.IsWindow hwnd && identity hwnd=expected then
                             parked.[hwnd] <- {expected=expected; original=original; parked=window.bounds}
                 | RestoreParked -> if valid() then restoreParked hwnd
                 | SetMinimized(minimized,below) ->
