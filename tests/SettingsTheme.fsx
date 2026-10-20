@@ -422,6 +422,7 @@ let main() =
             member _.restartGroup(_,_) = ()
             member _.addWindowToGroup(_,_) = ()
             member _.groups = List2()
+            member _.memberWindows = List2()
             member _.groupExited = Event<IGroup>().Publish
             member _.groupRemoved = Event<IGroup>().Publish
             member _.groupChanged = Event<IGroup>().Publish
