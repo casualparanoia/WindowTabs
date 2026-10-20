@@ -726,5 +726,14 @@ let main() =
     picked.Accept()
     pump 100
     check picked.IsClosed "Accepting a match did not close the tab search"
-    printfn "PASS: atomic/deferred saves, failure retry and backup recovery, subscriptions, temporary state, coalesced scans, dispatch, group cleanup, popup disposal and tab search."
+    // A trace never labels a same-window result as an Alt+Tab failure: the user
+    // can intentionally cycle back to the original window.
+    let first,second = IntPtr(101),IntPtr(202)
+    check (AltTabFocusTrace.foregroundPattern first []="no-foreground-change")
+          "An absent foreground transition was misclassified"
+    check (AltTabFocusTrace.foregroundPattern first [second]="foreground-changed")
+          "A new foreground window was missed"
+    check (AltTabFocusTrace.foregroundPattern first [second;first]="foreground-returned-to-start")
+          "A focus bounce back to the previous window was not distinguished"
+    printfn "PASS: atomic/deferred saves, failure retry and backup recovery, subscriptions, temporary state, coalesced scans, dispatch, group cleanup, popup disposal, tab search and passive focus-trace classification."
 TestInit.run main
