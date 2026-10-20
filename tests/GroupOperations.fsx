@@ -172,10 +172,11 @@ let main() =
             member _.suspendTabMonitoring() = ()
             member _.resumeTabMonitoring() = ()
             member _.llMouse = mouse.Publish})
+        let manualEligible = Collections.Generic.HashSet<IntPtr>()
         Services.register<IFilterService>({new IFilterService with
             member _.isAppWindow _ = false
             member _.isAppWindowStyle _ = false
-            member _.isTabbableWindow _ = false
+            member _.isTabbableWindow hwnd = manualEligible.Contains(hwnd)
             member _.isTabbingEnabledForAllProcessesByDefault with get()=false and set _=()
             member _.setIsTabbingEnabledForProcess _ _ = ()
             member _.setIsTabbingEnabledForProcesses _ _ = ()
@@ -770,7 +771,30 @@ let main() =
             // can restore the other windows when the source later finishes.
             onHelper(fun () -> OS().windowFromHwnd(handles.Head).showWindow(ShowWindowCommands.SW_SHOWNOACTIVATE))
             pumpUntil(fun () -> handles |> List.forall(fun hwnd -> not(OS().windowFromHwnd(hwnd).isMinimized)))
-            printfn "PASS: grouped order, normal placement, maximize followers, minimize/restore, stale events and controlled slow application. Measurements exclude real input and DWM."
+            // Explicit tab-menu transfer must detach from the first group's
+            // native owner before another group adopts the exact same HWND.
+            // Run this after the placement benchmarks so it doesn't affect them.
+            let memberHwnd = handles.Head
+            let destination = (desktop :> IDesktop).createGroup(false)
+            manualEligible.Add(memberHwnd) |> ignore
+            try
+                (desktop :> IDesktop).addWindowToGroup(destination.hwnd,memberHwnd)
+                pumpUntil(fun () ->
+                    destination.windows.contains((=)memberHwnd) &&
+                    not((info :> IGroup).windows.contains((=)memberHwnd)))
+                check ((destination :?> GroupInfo).group.isManual)
+                      "Explicit context-menu transfer was not recorded as manual grouping"
+                (desktop :> IDesktop).addWindowToGroup(info.hwnd,memberHwnd)
+                pumpUntil(fun () ->
+                    (info :> IGroup).windows.contains((=)memberHwnd) &&
+                    not(destination.windows.contains((=)memberHwnd)))
+                check (onGroup(fun group -> group.isManual))
+                      "Reattaching from another group was not recognized as manual"
+            finally
+                manualEligible.Remove(memberHwnd) |> ignore
+                destination.destroy()
+                pumpUntil(fun () -> desktop.retainedGroupCount=1)
+            printfn "PASS: grouped order, normal placement, maximize followers, minimize/restore, stale events, explicit menu transfer and controlled slow application. Measurements exclude real input and DWM."
         finally
             onHelper(fun () -> for form in forms do form.Delay <- 0; form.IconDelay <- 0)
             pumpUntil(fun () -> onGroup(fun group -> group.isPlacementIdle))
