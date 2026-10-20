@@ -647,9 +647,15 @@ type TabStripDecorator(group:WindowGroup) as this =
                         this.ts.removeTab(tab)
                         dragInfoCell.set(None)       
                         let (Tab(hwnd)) = tab
-                        let window = os.windowFromHwnd(hwnd)
+                        // Do not park the native HWND off-screen here. The member has
+                        // already been detached from its old group's placement owner,
+                        // so this direct hide bypasses FollowerPlacement's recovery
+                        // tracking. In independent-position mode the destination
+                        // intentionally does not realign incoming members, leaving
+                        // them stranded at the desktop's bottom-right parking point.
+                        // Keeping the native rectangle also preserves a user's
+                        // chosen position through a normal cross-group drag.
                         group.removeWindow(hwnd)
-                        window.hideOffScreen(None)
                         joinedByDrag <- false
                 | None -> ()
                 this.updateTsSlide()
