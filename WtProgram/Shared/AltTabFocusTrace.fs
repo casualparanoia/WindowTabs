@@ -41,9 +41,8 @@ module AltTabFocusTrace =
                 let owner = WinUserApi.GetWindow(current,GetWindowConstants.GW_OWNER)
                 let _,pid = WinUserApi.GetWindowThreadProcessId(current)
                 let style = WinUserApi.GetWindowLong(current,WindowLongFieldOffset.GWL_EXSTYLE).ToInt64()
-                let detail = sprintf "%d(pid=%d,owner=%d,visible=%b,minimized=%b,exstyle=0x%X)"
-                    (current.ToInt64()) pid (owner.ToInt64())
-                    (WinUserApi.IsWindowVisible current) (WinUserApi.IsIconic current) style
+                let detail =
+                    sprintf "%d(pid=%d,owner=%d,visible=%b,minimized=%b,exstyle=0x%X)" (current.ToInt64()) pid (owner.ToInt64()) (WinUserApi.IsWindowVisible current) (WinUserApi.IsIconic current) style
                 detail :: walk (seen.Add current) (depth+1) owner
         try walk Set.empty 0 hwnd |> String.concat " -> "
         with _ -> "unavailable"
