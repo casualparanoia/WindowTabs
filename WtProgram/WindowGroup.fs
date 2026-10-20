@@ -165,7 +165,7 @@ type GroupMenuChoices = {
     alignments: (TabDirection * Bemo.TabAlignment) list
     autoHideMode: string option }
 
-type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:TabAppearanceInfo) as this =
+type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:TabAppearanceInfo, ?keepIndividualWindowSizes:bool) as this =
     let Cell = CellScope(true)
     let inputOwnership = Collections.Generic.Dictionary<IntPtr,bool>()
     let _bb = Blackboard()
@@ -190,6 +190,7 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
     // Calling the settings service here would synchronously invoke that blocked thread.
     let mutable logicalAppearance = initialAppearance
     let mutable appearanceSnapshot = logicalAppearance.scaled
+    let mutable keepSizes = defaultArg keepIndividualWindowSizes false
 
     let isDestroyed = Cell.create(false)
     let zorderCell = Cell.create(List2<IntPtr>())
@@ -252,6 +253,7 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
         zorderCell.value.any((=) foregroundCell.value)
 
     member this.isSuperBarEnabled = enableSuperBar
+    member this.keepsIndividualWindowSizes = keepSizes
     /// A tab was dragged into it, or it was made by dragging a tab out: only such groups are
     /// remembered after their windows close, as rules and auto grouping remake the others.
     member this.isManual
@@ -332,6 +334,16 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
         let appColorsSubscription = Services.settings.notifyValue "appTabColors" (fun _ ->
             this.invokeAsync(fun() -> if not isDestroyed.value then this.refreshTabColors()))
         exitedEvent.Publish.Add(fun _ -> appColorsSubscription.Dispose())
+        let sizePolicySubscription = Services.settings.notifyValue "keepIndividualWindowSizes" (fun value ->
+            this.invokeAsync(fun () ->
+                if not isDestroyed.value then
+                    let enabled = unbox<bool> value
+                    if keepSizes<>enabled then
+                        keepSizes <- enabled
+                        // Returning to synchronized mode deliberately matches the current
+                        // group's active window. Enabling independence never resizes tabs.
+                        if not enabled then this.adjustChildWindows()))
+        exitedEvent.Publish.Add(fun _ -> sizePolicySubscription.Dispose())
         let colorModeSubscription = Services.settings.notifyValue "tabColorMode" (fun _ ->
             this.invokeAsync(fun() -> if not isDestroyed.value then this.refreshTabColors()))
         exitedEvent.Publish.Add(fun _ -> colorModeSubscription.Dispose())
@@ -719,7 +731,9 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
         if placement.value.IsSome && not changingMinimizeState then
             let bounds,wp,visible = placement.value.Value
             let below = zorderCell.value.tryHead |> Option.filter((<>) hwnd)
-            let request = FollowerPlacement.alignFrameRequest hwnd bounds visible wp below
+            let request =
+                if keepSizes then FollowerPlacement.alignPositionRequest hwnd visible below
+                else FollowerPlacement.alignFrameRequest hwnd bounds visible wp below
             FollowerPlacement.queue.submit(placementOwner,hwnd,request)
             // Maximize/snap can hide or cover the owned strip after its early events.
             reconcilePlacementState <- true
