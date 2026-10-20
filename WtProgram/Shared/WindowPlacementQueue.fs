@@ -132,6 +132,9 @@ type FollowerPlacementRequest =
     /// The source's window bounds and placement, the window to stay below, and the source's
     /// visible frame when the follower should match that rather than the window bounds.
     | AlignWindow of Rect * OSWindowPlacement * IntPtr option * Rect option
+    /// Move a normal follower to the group's visible-frame origin while keeping
+    /// its own native dimensions. Maximize/minimize are never copied from the top.
+    | AlignPosition of Rect * IntPtr option
     /// A window restored without activation can still rise above the tab that asked for it;
     /// the handle it should stay below goes with the request.
     | SetMinimized of bool * IntPtr option
@@ -156,6 +159,18 @@ module FollowerPlacement =
                     if minimized then window.prepareMinimizeAnchor(valid)
                     if valid() then window.showWindow(if minimized then ShowWindowCommands.SW_SHOWMINNOACTIVE else ShowWindowCommands.SW_SHOWNOACTIVATE)
                     below |> Option.iter(fun top -> if valid() && WinUserApi.IsWindow(top) then window.insertAfter(top))
+            | AlignPosition(frame,below) ->
+                // Reading the follower's current frame avoids replaying another
+                // tab's width/height; size is never present in this request.
+                // Never reposition a maximized/minimized window: preserve its OS state.
+                if window.placement.showCmd=ShowWindowCommands.SW_SHOWNORMAL then
+                    let own,seen = window.bounds,window.visibleBounds
+                    if not seen.size.isEmptyArea then
+                        let left,top = seen.x-own.x,seen.y-own.y
+                        let target = Rect(Pt(frame.x-left,frame.y-top),own.size)
+                        if own<>target && valid() then window.move(target)
+                        below |> Option.iter(fun top ->
+                            if valid() && WinUserApi.IsWindow top then window.insertAfter(top))
             | AlignWindow(bounds,wp,below,visible) ->
                 let actual = window.placement
                 let previous = defaultArg below window.prevZorder.hwnd
@@ -210,6 +225,8 @@ module FollowerPlacement =
     let alignBelowRequest hwnd bounds placement top = identity hwnd,AlignWindow(bounds,placement,Some top,None)
     /// As request and alignBelowRequest, matching the source's visible frame when restored.
     let alignFrameRequest hwnd bounds visible placement below = identity hwnd,AlignWindow(bounds,placement,below,Some visible)
+    /// Keep each tab's native dimensions; align only the visible frame origin.
+    let alignPositionRequest hwnd visible below = identity hwnd,AlignPosition(visible,below)
     let minimizeRequest hwnd minimized = identity hwnd,SetMinimized(minimized,None)
     let restoreBelowRequest hwnd top = identity hwnd,SetMinimized(false,Some top)
     let hideRequest hwnd = identity hwnd,HideForMove
