@@ -38,6 +38,7 @@ type GroupInfo(enableSuperBar, settings:ISettings, desktopDispatcher:IDispatcher
     let initialAppearance = ThemeService.currentAppearance()
     // Capture on the caller's main thread, which the group constructor blocks.
     let keepSizes = unbox<bool> (settings.getValue "keepIndividualWindowSizes")
+    let initialAnchor = WindowSizeAnchor.normalize (unbox<string> (settings.getValue "individualWindowAnchor"))
     let (_group, invoker) = ThreadHelper.startOnThreadAndWait <| fun() ->
         let plugins = List2<_>([
             Some(MouseScrollPlugin().cast<IPlugin>())
@@ -47,7 +48,7 @@ type GroupInfo(enableSuperBar, settings:ISettings, desktopDispatcher:IDispatcher
             ])
         let plugins = plugins.choose(id)
 
-        let _group = WindowGroup(enableSuperBar, plugins, initialAppearance, keepIndividualWindowSizes=keepSizes)
+        let _group = WindowGroup(enableSuperBar, plugins, initialAppearance, keepIndividualWindowSizes=keepSizes, individualWindowAnchor=initialAnchor)
         _group.exited.Add <| fun _ ->
             System.Threading.Volatile.Write(&_isExited,1)
             Application.ExitThread()
