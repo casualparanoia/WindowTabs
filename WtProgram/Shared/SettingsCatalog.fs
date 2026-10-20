@@ -34,6 +34,7 @@ module SettingsCatalog =
         { id="enable-tabs-for-new-apps"; page=ProgramSettings; text=Strings.Settings.enableTabsByDefault; binding=Toggle("enableTabbingByDefault",true,false) }
         { id="dim-inactive-groups"; page=GeneralSettings; text=Strings.Settings.dimInactiveGroups; binding=Toggle("hideInactiveTabs",true,false) }
         { id="keep-individual-window-sizes"; page=GeneralSettings; text=Strings.Settings.keepIndividualWindowSizes; binding=Toggle("keepIndividualWindowSizes",false,false) }
+        { id="keep-individual-window-positions"; page=GeneralSettings; text=Strings.Settings.keepIndividualWindowPositions; binding=Toggle("keepIndividualWindowPositions",false,false) }
         { id="individual-window-anchor"; page=GeneralSettings; text=Strings.Settings.individualWindowAnchor; binding=Choice("individualWindowAnchor",WindowSizeAnchor.values,"TopLeft") }
         { id="tab-alignment"; page=GeneralSettings; text=Strings.Settings.tabAlignment; binding=Choice("alignment",["Left";"Center";"Right"],"Center") }
         { id="tab-position"; page=GeneralSettings; text=Strings.Settings.tabPosition; binding=Choice("tabPosition",["Horizontal";"Left";"Right"],"Horizontal") }
@@ -92,7 +93,7 @@ module SettingsCatalog =
         match id with
         | "number-leader" | "leader-keys" -> Some "enable-number-leader"
         | "show-tabs-on-switch" -> Some "auto-hide-tabs"
-        | "individual-window-anchor" -> Some "keep-individual-window-sizes"
+        | "individual-window-anchor" | "keep-individual-window-positions" -> Some "keep-individual-window-sizes"
         | "group-windows-in-the-switcher" -> Some "use-windowtabs-for-alt-tab"
         | _ -> None
     let toggleKey id = match (find id).binding with Toggle(key,_,_) -> key | _ -> invalidArg "id" "Not a toggle"

@@ -32,6 +32,7 @@ type SettingsRec = {
     runAtStartup: bool
     hideInactiveTabs: bool
     keepIndividualWindowSizes: bool
+    keepIndividualWindowPositions: bool
     individualWindowAnchor: string
     enableTabbingByDefault: bool
     replaceAltTab: bool

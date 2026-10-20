@@ -107,6 +107,12 @@ let main() =
                 SettingsCatalog.toggleDefault "keepIndividualWindowSizes" true = false &&
                 SettingsCatalog.toggleDefault "keepIndividualWindowSizes" false = false)
                "Independent window sizing is not a default-off general setting"
+    let positionSetting = SettingsCatalog.find "keep-individual-window-positions"
+    assertTrue (positionSetting.page=GeneralSettings &&
+                SettingsCatalog.parent positionSetting.id=Some "keep-individual-window-sizes" &&
+                not(SettingsCatalog.toggleDefault "keepIndividualWindowPositions" false) &&
+                not(SettingsCatalog.toggleDefault "keepIndividualWindowPositions" true))
+               "Position-unlocking must be dependent on independent sizing and default off"
     let anchorSetting = SettingsCatalog.find "individual-window-anchor"
     assertTrue (anchorSetting.page=GeneralSettings &&
                 SettingsCatalog.parent anchorSetting.id=Some "keep-individual-window-sizes" &&

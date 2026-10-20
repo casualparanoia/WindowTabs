@@ -495,6 +495,29 @@ let main() =
                           "Changing the alignment anchor resized an independently sized follower"
                     api.setValue("individualWindowAnchor",box "TopLeft")
                     pumpUntil(fun () -> following.visibleBounds.location=origin)
+                    // Fully unlocked positions retain arbitrary native coordinates,
+                    // including after the active member has entered/exited move/size.
+                    api.setValue("keepIndividualWindowPositions",box true)
+                    pumpUntil(fun () -> onGroup(fun group -> group.keepsIndividualWindowPositions))
+                    let freeLocation = Pt(-19720,-19740)
+                    onHelper(fun () ->
+                        following.move(Rect(freeLocation,ownSize)))
+                    check (following.bounds.location=freeLocation)
+                          "Failed to move the free-position follower to its requested location"
+                    onGroup(fun group -> group.onEnterMoveSize(); group.onExitMoveSize())
+                    waitOperation()
+                    check (following.bounds.location=freeLocation && following.bounds.size=ownSize)
+                          "The group moved or parked an unlocked follower during native move/size"
+                    onGroup(fun group -> invoke "updatePlacements" group [||] |> ignore)
+                    waitOperation()
+                    check (following.bounds.location=freeLocation && following.bounds.size=ownSize)
+                          "An unlocked follower was realigned during a group placement update"
+                    api.setValue("keepIndividualWindowPositions",box false)
+                    pumpUntil(fun () ->
+                        onGroup(fun group -> not group.keepsIndividualWindowPositions && group.isPlacementIdle) &&
+                        following.visibleBounds.location=origin)
+                    check (following.bounds.size=ownSize)
+                          "Locking positions resized an independently-sized follower"
                     api.setValue("keepIndividualWindowSizes",box false)
                     pumpUntil(fun () -> onGroup(fun group -> not group.keepsIndividualWindowSizes && group.isPlacementIdle))
                     check (following.bounds.size=newBounds.size)
