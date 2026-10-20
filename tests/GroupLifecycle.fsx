@@ -915,7 +915,12 @@ let main() =
             check (soleGroup a false = Some separate) "Setting turned back still rebuilt the group"
             for info in [separate;chosenNow] do
                 onGroup info (fun group -> for hwnd in group.windows.items.list do group.removeWindow hwnd)
-            // Exercise production drag targets on their owning STAs without taking over the mouse.
+            // A free-position drop must not send a detached app HWND to the
+            // off-screen parking corner, even briefly. The context-menu
+            // transfer does not use this drag-exit path.
+            api.setValue("keepIndividualWindowSizes",box true)
+            api.setValue("keepIndividualWindowPositions",box true)
+            let dragArea = Screen.PrimaryScreen.WorkingArea
             for sourceDock,targetDock in [TabDockTop,TabDockLeft;TabDockLeft,TabDockTop;
                                           TabDockTop,TabDockRight;TabDockRight,TabDockTop;
                                           TabDockLeft,TabDockRight;TabDockRight,TabDockLeft] do
@@ -924,6 +929,11 @@ let main() =
                 for hwnd in [a;b] do (dragSource :> IGroup).addWindow(hwnd,false)
                 (dragTarget :> IGroup).addWindow(d,false)
                 pumpUntil "Drag groups did not acquire windows" (fun () -> nativeOrder dragSource=[a;b] && nativeOrder dragTarget=[d])
+                check (onGroup dragSource (fun group -> group.keepsIndividualWindowPositions))
+                      "The drag fixture did not enable independent HWND positions"
+                let dragged = OS().windowFromHwnd(b)
+                dragged.move(Rect(Pt(dragArea.Left+190,dragArea.Top+165),Sz(490,350)))
+                let beforeDrag = dragged.bounds
                 let data = onGroup dragSource (fun group ->
                     group.ts.dock <- sourceDock
                     let size = if group.ts.isVertical then Sz(220,400) else Sz(600,40)
@@ -939,6 +949,8 @@ let main() =
                     target.dragExit()
                     data)
                 pumpUntil "Drag source retained moved window" (fun () -> nativeOrder dragSource=[a] && publicOrder dragSource=[a])
+                check (dragged.bounds=beforeDrag)
+                      (sprintf "Dragging a tab out of its source group parked or displaced the native window: %A vs %A" dragged.bounds beforeDrag)
                 onGroup dragTarget (fun group ->
                     group.ts.dock <- targetDock
                     let size = if group.ts.isVertical then Sz(220,400) else Sz(600,40)
@@ -947,6 +959,8 @@ let main() =
                     check (target.dragEnter (box data) (Pt(1,1))) "Destination rejected a drag"
                     target.dragEnd())
                 pumpUntil "Cross-orientation drag lost its insertion order" (fun () -> nativeOrder dragTarget=[b;d] && publicOrder dragTarget=[b;d])
+                check (dragged.bounds=beforeDrag)
+                      "A cross-group drag changed a free-position window's native rectangle"
                 check (onGroup dragTarget (fun group -> group.ts.dock)=targetDock) "Drag changed the destination orientation"
                 // Only the group a tab was dropped into is one made by hand, to be remembered.
                 check (onGroup dragTarget (fun group -> group.isManual) && not(onGroup dragSource (fun group -> group.isManual)))
@@ -955,7 +969,9 @@ let main() =
                     onGroup info (fun group -> for hwnd in group.windows.items.list do group.removeWindow hwnd)
                     (info :> IGroup).destroy()
                 pumpUntil "Drag groups did not exit" (fun () -> dragSource.isExited && dragTarget.isExited)
-            printfn "PASS: real HWND grouping, duplicate add, reorder, cross-STA transfer, six cross-orientation drags, destroyed-window removal, ungrouping, taskbar recovery and taskbar icon rebuilds."
+            api.setValue("keepIndividualWindowPositions",box false)
+            api.setValue("keepIndividualWindowSizes",box false)
+            printfn "PASS: real HWND grouping, duplicate add, reorder, cross-STA transfer, six free-position cross-orientation drags without off-screen parking, destroyed-window removal, ungrouping, taskbar recovery and taskbar icon rebuilds."
         finally
             let rest = desktopApi.groups.list |> List.map(fun g -> g :?> GroupInfo)
             for info in List.distinct([source;target;combined] @ rest) do
