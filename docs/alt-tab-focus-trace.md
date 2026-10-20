@@ -94,3 +94,38 @@ was visible. The trace intentionally contains no semantic window identity.
 The GitHub Actions Windows jobs compile the recording code and test neutral
 focus-history classifications. An interactive Windows diagnostic session is
 still required to identify the intermittent defect.
+
+
+## Combined-taskbar owner-chain investigation
+
+An A → B → A session (combining off → on → off) found five apparent
+same-HWND returns only in the combined interval, versus zero in both off
+intervals. See PR #2 for the timestamped counts. To distinguish a failed
+native Alt+Tab selection from a hidden/proxy-owned application, the recorder
+now captures additional **read-only** diagnostics:
+
+- `taskbar-combine-setting`: startup state and global setting changes with
+  timestamps. Individual groups can override the global setting via their
+  own menu; an enabled global setting is not proof any particular HWND
+  currently belongs to a combined group.
+- `owner-chain-200ms` and `owner-chain-800ms`: after Alt release, record
+  current foreground HWND, up to four successive `GW_OWNER` links, numeric
+  process IDs, visible/minimized state and extended style bitmask. No
+  process names, window titles, text or screenshot data are captured.
+  This helps show whether a foreground application is owned by one of
+  WindowTabs' proxy HWNDs and whether a `WS_EX_NOACTIVATE` host participates.
+
+The snapshots happen after release on the same background sampling path as
+the existing focus snapshots. No foreground, style, or ownership **changes**
+are performed by these diagnostics.
+
+When reporting, compare whether the target app's owner chain is empty with
+combining disabled and populated with combining enabled, and whether a
+same-window return correlates with a specific proxy/host chain.
+`WS_EX_NOACTIVATE` on the combined taskbar host is a **suspect**, not
+a proven root cause; changing it without isolating the shell activation
+mechanism could introduce unwanted focus changes on minimize/restore.
+
+For concise review after your session, upload the whole
+`focus-trace.jsonl` rather than relying on F11/F12 annotations alone;
+the return-to-start samples may detect unmarked incidents.
