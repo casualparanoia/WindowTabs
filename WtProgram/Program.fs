@@ -98,6 +98,7 @@ type Program(lifetime:LifetimeScope, ?settings:Settings) as this =
         ]))
         
     let hotKeyManager = lifetime.Own(new HotKeyManager())
+    let focusFlightRecorder = lifetime.Own(AltTabFocusTrace.attach os)
     // Native events can pump during startup, before the filter is registered in run.
     // The initial full refresh processes those windows once the services are ready.
     let refreshQueue = lifetime.Own(new WindowRefreshQueue(30, this.updateChangedWindows, this.updateAppWindows,
@@ -134,6 +135,18 @@ type Program(lifetime:LifetimeScope, ?settings:Settings) as this =
         lifetime.Own({new IDisposable with
             member _.Dispose() = tabSearchCell.value.iter(fun search -> search.Close())}) |> ignore
         this.registerHotKeys()
+        if AltTabFocusTrace.enabled then
+            // These optional markers are available only while the recorder is
+            // enabled. A failure to reserve either chord is logged explicitly.
+            let register name virtualKey kind =
+                let available = hotKeyManager.register name (2 ||| 4, virtualKey)
+                                    (fun () -> AltTabFocusTrace.mark kind)
+                AltTabFocusTrace.record "marker-hotkey" IntPtr.Zero
+                    (sprintf "kind=%s registered=%b" kind available)
+            register "focusTraceSuccess" 0x7A "success"
+            register "focusTraceFailure" 0x7B "failure"
+            AltTabFocusTrace.record "switcher-mode" IntPtr.Zero
+                (sprintf "replaceAltTab=%b" settingsManager.settings.replaceAltTab)
         lifetime.Own(Services.settings.notifyValue "enableNumberLeader" (fun value ->
             if unbox<bool> value then
                 if not ((this :> IProgram).setHotKey "numberLeader" ((this :> IProgram).getHotKey "numberLeader")) then
