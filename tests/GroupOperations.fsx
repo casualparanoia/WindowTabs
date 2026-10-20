@@ -75,6 +75,19 @@ type HelperWindow() =
         if message.Msg <> 0x2E0 then base.WndProc(&message)
 
 let main() =
+    // The shared visible-frame anchor stays stable across unlike window sizes.
+    let frame = Rect(Pt(100,200),Sz(500,400))
+    let own = Rect(Pt(0,0),Sz(200,100))
+    let visible = Rect(Pt(5,4),Sz(190,90))
+    let target = WindowSizeAnchor.target
+    check (target "TopLeft" frame own visible = Rect(Pt(95,196),own.size))
+          "Top-left anchor changed its backward-compatible placement"
+    check (target "Center" frame own visible = Rect(Pt(250,351),own.size))
+          "Centre anchor lost the native visible-frame border adjustment"
+    check (target "BottomRight" frame own visible = Rect(Pt(405,506),own.size))
+          "Bottom-right anchor used the wrong corner"
+    check (WindowSizeAnchor.normalize "unsupported"="TopLeft")
+          "Unknown anchors did not safely fall back to top-left"
     // Lasts until the test process exits.
     Timer.timeBeginPeriod 1u |> ignore
     // Hold a native-like call in flight, then replace its queued successors and
@@ -472,6 +485,16 @@ let main() =
                     waitOperation()
                     check (following.bounds.size=ownSize && following.visibleBounds.location=origin)
                           "Independent mode failed to return a parked follower after moving the group"
+                    api.setValue("individualWindowAnchor",box "Center")
+                    let centered = onGroup(fun group ->
+                        let frame = group.bounds.value.Value
+                        let real,seen = following.bounds,following.visibleBounds
+                        WindowSizeAnchor.target "Center" frame real seen)
+                    pumpUntil(fun () -> following.bounds.location=centered.location)
+                    check (following.bounds.size=ownSize)
+                          "Changing the alignment anchor resized an independently sized follower"
+                    api.setValue("individualWindowAnchor",box "TopLeft")
+                    pumpUntil(fun () -> following.visibleBounds.location=origin)
                     api.setValue("keepIndividualWindowSizes",box false)
                     pumpUntil(fun () -> onGroup(fun group -> not group.keepsIndividualWindowSizes && group.isPlacementIdle))
                     check (following.bounds.size=newBounds.size)
