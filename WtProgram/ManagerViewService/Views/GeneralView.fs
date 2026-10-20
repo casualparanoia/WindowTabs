@@ -9,6 +9,7 @@ type GeneralView() =
         SettingsBindings.toggleRow startup "launch-at-sign-in"
         let behaviour = SettingsUi.sectionCard table (tr Strings.General.tabBehavior)
         SettingsBindings.toggleRow behaviour "dim-inactive-groups"
+        SettingsBindings.toggleRow behaviour "keep-individual-window-sizes"
         let position = SettingsBindings.choiceRow behaviour "tab-position"
                            [|tr Strings.TabMenu.top;tr Strings.Common.left;tr Strings.Common.right|]
         let alignment = SettingsBindings.choiceRow behaviour "tab-alignment"
