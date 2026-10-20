@@ -147,6 +147,14 @@ type Program(lifetime:LifetimeScope, ?settings:Settings) as this =
             register "focusTraceFailure" 0x7B "failure"
             AltTabFocusTrace.record "switcher-mode" IntPtr.Zero
                 (sprintf "replaceAltTab=%b" settingsManager.settings.replaceAltTab)
+            AltTabFocusTrace.record "taskbar-combine-setting" IntPtr.Zero
+                (sprintf "enabled=%b source=startup" settingsManager.settings.combineIconsInTaskbar)
+            // Group context-menu choices can override this global preference.
+            // The recorded foreground owner chain remains the authoritative
+            // evidence for which proxy actually owns the app.
+            lifetime.Own(Services.settings.notifyValue "combineIconsInTaskbar" (fun value ->
+                AltTabFocusTrace.record "taskbar-combine-setting" IntPtr.Zero
+                    (sprintf "enabled=%b source=change" (unbox<bool> value)))) |> ignore
         lifetime.Own(Services.settings.notifyValue "enableNumberLeader" (fun value ->
             if unbox<bool> value then
                 if not ((this :> IProgram).setHotKey "numberLeader" ((this :> IProgram).getHotKey "numberLeader")) then
