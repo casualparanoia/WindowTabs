@@ -158,7 +158,11 @@ type IDesktop =
     abstract member isEmpty : bool
     abstract member createGroup: bool -> IGroup
     abstract member restartGroup: IntPtr * bool -> unit
+    /// An explicit move requested by the tab menu.
+    abstract member addWindowToGroup: IntPtr * IntPtr -> unit
     abstract member groups : List2<IGroup>
+    /// Flattened group membership, read on the desktop main STA for menu discovery.
+    abstract member memberWindows : List2<IntPtr>
     abstract member groupExited: IEvent<IGroup>
     abstract member groupRemoved: IEvent<IGroup>
     /// A group's windows, their titles, or whether it was made by hand changed. Main thread.

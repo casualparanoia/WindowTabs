@@ -70,6 +70,8 @@ module Strings =
         let numberShortcut = { en="Switch by number"; zh="数字键切换"; ja="番号で切り替え" }
         let enableTabs = { en="Enable tabs"; zh="启用标签"; ja="タブを有効にする" }
         let autoGroupWindows = { en="Auto-group windows"; zh="自动分组"; ja="ウィンドウを自動グループ化" }
+        let addWindowToGroup = { en="Add window to group"; zh="添加窗口到分组"; ja="ウィンドウをグループに追加" }
+        let noWindowsToAdd = { en="No available windows"; zh="没有可添加的窗口"; ja="追加可能なウィンドウがありません" }
         let close = { en="Close"; zh="关闭"; ja="閉じる" }
         let closeOthers = { en="Close others"; zh="关闭其他"; ja="他を閉じる" }
         let closeAllOf exe = { en=sprintf "Close all '%s' windows" exe; zh=sprintf "关闭所有“%s”窗口" exe; ja=sprintf "「%s」のウィンドウをすべて閉じる" exe }

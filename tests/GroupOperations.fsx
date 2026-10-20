@@ -172,10 +172,11 @@ let main() =
             member _.suspendTabMonitoring() = ()
             member _.resumeTabMonitoring() = ()
             member _.llMouse = mouse.Publish})
+        let manualEligible = Collections.Generic.HashSet<IntPtr>()
         Services.register<IFilterService>({new IFilterService with
             member _.isAppWindow _ = false
             member _.isAppWindowStyle _ = false
-            member _.isTabbableWindow _ = false
+            member _.isTabbableWindow hwnd = manualEligible.Contains(hwnd)
             member _.isTabbingEnabledForAllProcessesByDefault with get()=false and set _=()
             member _.setIsTabbingEnabledForProcess _ _ = ()
             member _.setIsTabbingEnabledForProcesses _ _ = ()
@@ -770,7 +771,62 @@ let main() =
             // can restore the other windows when the source later finishes.
             onHelper(fun () -> OS().windowFromHwnd(handles.Head).showWindow(ShowWindowCommands.SW_SHOWNOACTIVATE))
             pumpUntil(fun () -> handles |> List.forall(fun hwnd -> not(OS().windowFromHwnd(hwnd).isMinimized)))
-            printfn "PASS: grouped order, normal placement, maximize followers, minimize/restore, stale events and controlled slow application. Measurements exclude real input and DWM."
+            // Explicit tab-menu transfer must detach from the first group's
+            // native owner before another group adopts the exact same HWND.
+            // Run this after the placement benchmarks so it doesn't affect them.
+            let memberHwnd = handles.Head
+            let seedHwnd = handles.[1]
+            let destination = (desktop :> IDesktop).createGroup(false)
+            let destinationInfo = destination :?> GroupInfo
+            let onDestination action =
+                let mutable answer = None
+                destinationInfo.invokeGroup(fun () -> answer <- Some(action destinationInfo.group))
+                pumpUntil(fun () -> answer.IsSome)
+                answer.Value
+            // An empty group has no TabStrip/HWND yet: the actual menu always
+            // belongs to an existing group with at least one window. Establish
+            // that real precondition, preserving another member as the target
+            // while the tested HWND moves in and out.
+            destinationInfo.addAfterDetaching(info,seedHwnd)
+            pumpUntil(fun () ->
+                destination.windows.contains((=)seedHwnd) &&
+                not((info :> IGroup).windows.contains((=)seedHwnd)))
+            pumpUntil(fun () -> onDestination(fun group -> group.windows.contains(seedHwnd)))
+            let destinationHwnd = destination.hwnd
+            manualEligible.Add(memberHwnd) |> ignore
+            try
+                (desktop :> IDesktop).addWindowToGroup(destinationHwnd,memberHwnd)
+                pumpUntil(fun () ->
+                    destination.windows.contains((=)memberHwnd) &&
+                    not((info :> IGroup).windows.contains((=)memberHwnd)))
+                // Desktop snapshots are optimistic; do not begin a reverse
+                // transfer before the destination's native group has attached.
+                pumpUntil(fun () -> onDestination(fun group -> group.windows.contains(memberHwnd)))
+                check (onDestination(fun group -> group.isManual))
+                      "Explicit context-menu transfer was not recorded as manual grouping"
+                (desktop :> IDesktop).addWindowToGroup(info.hwnd,memberHwnd)
+                pumpUntil(fun () ->
+                    (info :> IGroup).windows.contains((=)memberHwnd) &&
+                    not(destination.windows.contains((=)memberHwnd)))
+                pumpUntil(fun () ->
+                    onGroup(fun group -> group.windows.contains(memberHwnd)) &&
+                    onDestination(fun group -> not(group.windows.contains(memberHwnd))))
+                check (onGroup(fun group -> group.isManual))
+                      "Reattaching from another group was not recognized as manual"
+            finally
+                manualEligible.Remove(memberHwnd) |> ignore
+                // Restore the seed and any transferred member even if an
+                // assertion failed, so the existing fixture cleans up cleanly.
+                for candidate in [memberHwnd;seedHwnd] do
+                    if destination.windows.contains((=)candidate) then
+                        info.addAfterDetaching(destinationInfo,candidate)
+                pumpUntil(fun () ->
+                    onGroup(fun group ->
+                        group.windows.contains(seedHwnd) &&
+                        group.windows.contains(memberHwnd)))
+                destination.destroy()
+                pumpUntil(fun () -> desktop.retainedGroupCount=1)
+            printfn "PASS: grouped order, normal placement, maximize followers, minimize/restore, stale events, explicit menu transfer and controlled slow application. Measurements exclude real input and DWM."
         finally
             onHelper(fun () -> for form in forms do form.Delay <- 0; form.IconDelay <- 0)
             pumpUntil(fun () -> onGroup(fun group -> group.isPlacementIdle))
