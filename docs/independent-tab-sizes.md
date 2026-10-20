@@ -86,3 +86,36 @@ Future **Hide non-selected group windows** is a different policy. It needs
 persistent per-HWND restore locations and explicit lifecycle handling for
 activation, minimize/restore, ungrouping, virtual desktops, and app exit.
 The temporary hide-for-resize behavior alone is not sufficient.
+
+
+### Temporary parking recovery (2026-10-20)
+
+Real-world testing uncovered a serious native-window regression: some grouped app HWNDs
+(e.g., Spotify/Kate) could remain parked almost entirely off the desktop at the
+lower-right after they were moved out of a group, or even after WindowTabs exited.
+Maximizing with **Win+Up**, or **Alt+Space → M**, brought them back. This
+does not indicate the process or window was destroyed.
+
+The culprit is the existing resize-time `HideForMove` path, which writes a
+temporary off-screen `WINDOWPLACEMENT.rcNormalPosition`. Group detach/teardown
+previously cancelled the placement queue without any guaranteed inverse move.
+
+The placement worker now saves the original native window rectangle before
+parking, tracks the parked rectangle and HWND process/thread identity, and can
+restore only if the native window is **still at the parking location** (never
+overwrite a later user move). Both tab removal and group shutdown call
+`FollowerPlacement.releaseAndRestore`: queue ownership is cancelled first;
+a per-HWND lock then waits for an already-running native placement call to
+finish before applying recovery. A mode transition can request
+`RestoreParked` explicitly. If the HWND is gone or reused, recovery does
+nothing.
+
+**Independent-size groups no longer park their follower application windows
+during resize.** This removes an unsafe behavior from an experimental mode;
+the future **Hide non-selected group windows** option must have its own
+well-defined recovery and visibility lifecycle.
+
+`GroupLifecycle` includes actual Windows HWND tests for release-time recovery
+and explicit unpark. This does not establish success for all third-party apps,
+snap/maximized states or unusual multi-monitor arrangements: keep the PR
+draft until manual validation.
