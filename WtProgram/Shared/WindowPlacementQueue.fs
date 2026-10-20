@@ -163,7 +163,9 @@ module FollowerPlacement =
                 // Reading the follower's current frame avoids replaying another
                 // tab's width/height; size is never present in this request.
                 // Never reposition a maximized/minimized window: preserve its OS state.
-                if window.placement.showCmd=ShowWindowCommands.SW_SHOWNORMAL then
+                let state = window.placement.showCmd
+                if state=ShowWindowCommands.SW_SHOWNORMAL ||
+                   state=ShowWindowCommands.SW_SHOWNOACTIVATE then
                     let own,seen = window.bounds,window.visibleBounds
                     if not seen.size.isEmptyArea then
                         let left,top = seen.x-own.x,seen.y-own.y
