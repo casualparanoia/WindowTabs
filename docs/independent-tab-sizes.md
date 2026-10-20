@@ -9,8 +9,11 @@ When disabled, WindowTabs continues using the upstream `AlignWindow` follower re
 it synchronizes size, visible-frame position, and minimize/maximize transitions.
 
 When enabled, the group uses a new `AlignPosition` request. A normal follower keeps
-its existing native width and height; only its visible-frame **top-left corner** is
-placed on the group's anchor. Tabs remain members of one group, not separate
+its existing native width and height. **Align windows by** is a subordinate dropdown
+with nine corners/edge-centres/centre anchor points; **Top left** is the default.
+The corresponding point of each follower's *visible frame* is placed on the active
+window's anchor. For example, **Center** aligns the window centres while preserving
+each one's dimensions. Tabs remain members of one group, not separate
 groups. Their native windows may have unequal widths and heights. Resizing the active
 normal window must not propagate its dimensions to other normal windows.
 Moving the group continues to align the follower origins.
