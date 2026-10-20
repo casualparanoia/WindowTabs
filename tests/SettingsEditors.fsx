@@ -107,6 +107,13 @@ let main() =
                 SettingsCatalog.toggleDefault "keepIndividualWindowSizes" true = false &&
                 SettingsCatalog.toggleDefault "keepIndividualWindowSizes" false = false)
                "Independent window sizing is not a default-off general setting"
+    let anchorSetting = SettingsCatalog.find "individual-window-anchor"
+    assertTrue (anchorSetting.page=GeneralSettings &&
+                SettingsCatalog.parent anchorSetting.id=Some "keep-individual-window-sizes" &&
+                SettingsCatalog.choiceDefault "individualWindowAnchor"="TopLeft" &&
+                SettingsCatalog.normalizeChoice "individualWindowAnchor" "BottomRight"="BottomRight" &&
+                SettingsCatalog.normalizeChoice "individualWindowAnchor" "missing"="TopLeft")
+               "Nine-position anchor is not the correct dependent, default-off option"
     let found query = SettingsCatalog.all |> List.filter(SettingsCatalog.matches query) |> List.map(fun item -> item.id)
     // Ordered as the settings window lists results: caption matches first.
     let ranked query = found query |> List.sortByDescending(fun id -> SettingsCatalog.searchRank query (SettingsCatalog.find id))
