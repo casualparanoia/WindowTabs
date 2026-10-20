@@ -138,6 +138,13 @@ module Strings =
                 zh="切换标签或移动分组时保留每个窗口自己的大小。分组窗口仍共用屏幕位置。最大化和最小化状态保持不变。"
                 ja="タブの切り替えやグループの移動時にも各ウィンドウの大きさを保持します。画面上の位置は共有し、最大化・最小化状態は維持します。" }
             keywords={ en="independent separate per-tab resize dimensions"; zh="独立 尺寸 缩放"; ja="個別 サイズ 変更" } }
+        let keepIndividualWindowPositions = {
+            caption={ en="Keep individual window positions"; zh="保留每个窗口的位置"; ja="ウィンドウごとの位置を保持" }
+            description={
+                en="Allow grouped windows to move independently. Switching tabs, resizing or moving a window won't reposition the others. The tab strip follows the active window."
+                zh="允许独立移动分组中的每个窗口。切换标签、缩放或移动窗口时不重新定位其他窗口。标签栏跟随活动窗口。"
+                ja="グループ内のウィンドウをそれぞれ独立して移動できます。切り替え、サイズ変更、移動時もほかのウィンドウの位置は変わりません。タブバーはアクティブなウィンドウに付随します。" }
+            keywords={ en="unlock movement move positions independent location"; zh="独立 位置 移动"; ja="個別 位置 移動" } }
         let individualWindowAnchor = {
             caption={ en="Align windows by"; zh="窗口对齐基准"; ja="ウィンドウの整列位置" }
             description={ en="Use the same corner or centre point of each window when sizes differ."; zh="不同尺寸的窗口对齐相同的角或中心点。"; ja="サイズが違うウィンドウの角または中心を合わせます。" }
