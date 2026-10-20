@@ -31,6 +31,22 @@ module AltTabFocusTrace =
         elif observed |> List.tryLast = Some before then "foreground-returned-to-start"
         else "foreground-changed"
 
+    /// Only HWND geometry/ownership metadata is sampled; no titles or text.
+    /// A combined tab's application HWND will normally have a WindowTabs-owned
+    /// proxy HWND as GW_OWNER. The normal uncombined window usually has none.
+    let private ownerChain hwnd =
+        let rec walk (seen:Set<IntPtr>) depth (current:IntPtr) =
+            if depth>=4 || current=IntPtr.Zero || seen.Contains current || not(WinUserApi.IsWindow current) then []
+            else
+                let owner = WinUserApi.GetWindow(current,GetWindowConstants.GW_OWNER)
+                let _,pid = WinUserApi.GetWindowThreadProcessId(current)
+                let style = WinUserApi.GetWindowLong(current,WindowLongFieldOffset.GWL_EXSTYLE).ToInt64()
+                let detail =
+                    sprintf "%d(pid=%d,owner=%d,visible=%b,minimized=%b,exstyle=0x%X)" (current.ToInt64()) pid (owner.ToInt64()) (WinUserApi.IsWindowVisible current) (WinUserApi.IsIconic current) style
+                detail :: walk (seen.Add current) (depth+1) owner
+        try walk Set.empty 0 hwnd |> String.concat " -> "
+        with _ -> "unavailable"
+
     let private currentAttempt() = lock stateGate (fun () -> attempt)
     let record (stage:string) (hwnd:IntPtr) (detail:string) =
         if enabled then
@@ -46,6 +62,11 @@ module AltTabFocusTrace =
                     JProperty("detail",detail)).ToString(Formatting.None)
                 buffer.Enqueue(entry)
             with _ -> ()
+
+    let snapshot phase =
+        if enabled then
+            let foreground = WinUserApi.GetForegroundWindow()
+            record ("owner-chain-"+phase) foreground (ownerChain foreground)
 
     let private flush() =
         if enabled then
@@ -100,8 +121,10 @@ module AltTabFocusTrace =
                             ThreadPool.QueueUserWorkItem(fun _ ->
                                 Thread.Sleep(200)
                                 record "sample-200ms" IntPtr.Zero ""
+                                snapshot "200ms"
                                 Thread.Sleep(600)
-                                record "sample-800ms" IntPtr.Zero "") |> ignore
+                                record "sample-800ms" IntPtr.Zero ""
+                                snapshot "800ms") |> ignore
                     elif tab && down then
                         let isAlt = (data.flags &&& LlKeyboardHookFlags.LLKHF_ALTDOWN) <> 0 ||
                                     lock stateGate (fun () -> altDown)
