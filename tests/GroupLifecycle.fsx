@@ -919,12 +919,15 @@ let main() =
                    unrelatedWindow.zorder < OS().windowFromHwnd(a).zorder)
                   "Enabling combined icons raised an inactive group or changed foreground"
             let rebuilt = (soleGroup a true).Value
-            check (nativeOrder rebuilt = [a;d]) "Rebuilt group lost its windows"
+            pumpUntil "Rebuilt combined group did not receive both windows" (fun () ->
+                Set.ofList (nativeOrder rebuilt) = Set.ofList [a;d])
             check (rebuilt.ruleGroupId=Some "project-a") "Taskbar rebuild lost the named grouping target"
             check (onGroup rebuilt (fun group -> group.menuChoices) = savedChoices) "Rebuilt group lost its tab menu choices"
             api.setValue("combineIconsInTaskbar", box false)
             pumpUntil "Setting did not separate an open group's taskbar icons" (fun () -> (soleGroup a false).IsSome)
             pumpUntil "Replaced combined group did not retire" (fun () -> rebuilt.isExited)
+            pumpUntil "Rebuilt ordinary group did not receive both windows" (fun () ->
+                (soleGroup a false) |> Option.exists(fun group -> Set.ofList (nativeOrder group) = Set.ofList [a;d]))
             check (WinUserApi.GetForegroundWindow()=focusBeforeModeChange &&
                    unrelatedWindow.zorder < OS().windowFromHwnd(a).zorder)
                   "Disabling combined icons raised an inactive group or changed foreground"
