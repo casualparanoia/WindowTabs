@@ -812,7 +812,7 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
                 // ownership changes, so enabling combine on a background group
                 // does not deliberately pull those apps over unrelated windows.
                 if placedOwner=IntPtr.Zero && adopted.Count=0 then
-                    let bottom = this.members.last
+                    let bottom = this.members.list |> List.last
                     WinUserApi.SetWindowPos(owner,bottom,0,0,0,0,
                         SetWindowPosFlags.SWP_NOMOVE ||| SetWindowPosFlags.SWP_NOSIZE |||
                         SetWindowPosFlags.SWP_NOACTIVATE ||| SetWindowPosFlags.SWP_NOOWNERZORDER) |> ignore
