@@ -283,6 +283,16 @@ let main() =
         use permissionSecond = new Form(ShowInTaskbar=false)
         let permissionHandles = [permissionFirst.Handle;permissionSecond.Handle]
         let permissionStyles = permissionHandles |> List.map(fun hwnd -> WinUserApi.GetWindowLong(hwnd,WindowLongFieldOffset.GWL_EXSTYLE))
+        // An unrelated foreground window must remain above an inactive group
+        // when its newly created taskbar proxies acquire native ownership.
+        use unrelated = new Form(ShowInTaskbar=false,StartPosition=FormStartPosition.Manual,
+                                 Bounds=Drawing.Rectangle(-19000,-19000,320,200))
+        let unrelatedWindow = OS().windowFromHwnd(unrelated.Handle)
+        for hwnd in permissionHandles do
+            OS().windowFromHwnd(hwnd).showWindow(ShowWindowCommands.SW_SHOWNOACTIVATE)
+        unrelatedWindow.showWindow(ShowWindowCommands.SW_SHOWNOACTIVATE)
+        let unrelatedAboveGroup() =
+            permissionHandles |> List.forall(fun hwnd -> unrelatedWindow.zorder < OS().windowFromHwnd(hwnd).zorder)
         let permissionProbe = desktopApi.createGroup(false) :?> GroupInfo
         let mutable compatible = true
         let permissionPlugin = onGroup permissionProbe (fun group ->
@@ -291,11 +301,21 @@ let main() =
             (plugin :> IPlugin).init()
             plugin)
         try
-            for hwnd in permissionHandles do (permissionProbe :> IGroup).addWindow(hwnd,false)
+            (permissionProbe :> IGroup).addWindow(permissionHandles.Head,false)
+            pumpUntil "Permission probe did not acquire its first window" (fun () ->
+                nativeOrder permissionProbe=[permissionHandles.Head])
+            unrelatedWindow.setForeground(false)
+            check (WinUserApi.GetForegroundWindow()=unrelated.Handle && unrelatedAboveGroup())
+                  "Background ownership fixture failed to establish an unrelated foreground window"
+            (permissionProbe :> IGroup).addWindow(permissionHandles.[1],false)
             pumpUntil "Permission probe did not acquire windows" (fun () -> nativeOrder permissionProbe=permissionHandles)
             let owner hwnd = WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)
             pumpUntil "Compatible input queues did not combine taskbar ownership" (fun () ->
                 permissionHandles |> List.forall TaskbarProxies.ownsWindow)
+            check (WinUserApi.GetForegroundWindow()=unrelated.Handle)
+                  "Taskbar proxy adoption activated a background group's application"
+            check (unrelatedAboveGroup())
+                  "Enabling combined taskbar ownership raised grouped applications over an unrelated foreground window"
             let cloakTarget = onGroup permissionProbe (fun group -> group.topWindow)
             let mutable cloak = 1
             check (DwmApi.DwmSetWindowAttribute(cloakTarget,13,&cloak,4)=0) "Could not cloak input-isolation fixture"
