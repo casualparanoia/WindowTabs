@@ -50,7 +50,7 @@ module AltTabFocusTrace =
     let private currentAttempt() = lock stateGate (fun () -> attempt)
     // Delayed samples belong to the Alt+Tab attempt that scheduled them,
     // even when another attempt begins before the sampling timer fires.
-    let private recordForAttempt recordedAttempt (stage:string) (hwnd:IntPtr) (detail:string) =
+    let private recordForAttempt (recordedAttempt:int) (stage:string) (hwnd:IntPtr) (detail:string) =
         if enabled then
             try
                 let foreground = WinUserApi.GetForegroundWindow()
