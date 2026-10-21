@@ -304,16 +304,17 @@ let main() =
             (permissionProbe :> IGroup).addWindow(permissionHandles.Head,false)
             pumpUntil "Permission probe did not acquire its first window" (fun () ->
                 nativeOrder permissionProbe=[permissionHandles.Head])
-            unrelatedWindow.setForeground(false)
-            check (WinUserApi.GetForegroundWindow()=unrelated.Handle && unrelatedAboveGroup())
-                  "Background ownership fixture failed to establish an unrelated foreground window"
+            unrelatedWindow.insertAfter(WindowHandleTypes.HWND_TOP)
+            check (unrelatedAboveGroup())
+                  "Background ownership fixture failed to establish an unrelated higher z-order window"
+            let foregroundBeforeAdoption = WinUserApi.GetForegroundWindow()
             (permissionProbe :> IGroup).addWindow(permissionHandles.[1],false)
             pumpUntil "Permission probe did not acquire windows" (fun () -> nativeOrder permissionProbe=permissionHandles)
             let owner hwnd = WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)
             pumpUntil "Compatible input queues did not combine taskbar ownership" (fun () ->
                 permissionHandles |> List.forall TaskbarProxies.ownsWindow)
-            check (WinUserApi.GetForegroundWindow()=unrelated.Handle)
-                  "Taskbar proxy adoption activated a background group's application"
+            check (WinUserApi.GetForegroundWindow()=foregroundBeforeAdoption)
+                  "Taskbar proxy adoption changed native foreground activation"
             check (unrelatedAboveGroup())
                   "Enabling combined taskbar ownership raised grouped applications over an unrelated foreground window"
             let cloakTarget = onGroup permissionProbe (fun group -> group.topWindow)
@@ -351,19 +352,20 @@ let main() =
             try
                 for hwnd in permissionHandles do (initial :> IGroup).addWindow(hwnd,false)
                 pumpUntil "Toggle fixture did not acquire both windows" (fun () -> nativeOrder initial=permissionHandles)
-                unrelatedWindow.setForeground(false)
-                check (WinUserApi.GetForegroundWindow()=unrelated.Handle && unrelatedAboveGroup())
-                      "Toggle fixture could not establish its foreground baseline"
+                unrelatedWindow.insertAfter(WindowHandleTypes.HWND_TOP)
+                check (unrelatedAboveGroup())
+                      "Toggle fixture could not establish its relative z-order baseline"
+                let foregroundBeforeToggle = WinUserApi.GetForegroundWindow()
                 desktopApi.restartGroup(initial.hwnd,true)
                 pumpUntil "Enabling combine did not replace the original group" (fun () ->
                     initial.isExited && permissionHandles |> List.forall TaskbarProxies.ownsWindow)
-                check (WinUserApi.GetForegroundWindow()=unrelated.Handle && unrelatedAboveGroup())
-                      "Enabling combined icons brought background grouped windows above the active application"
+                check (WinUserApi.GetForegroundWindow()=foregroundBeforeToggle && unrelatedAboveGroup())
+                      "Enabling combined icons changed foreground or raised background grouped windows"
                 let replacement = (desktop.findGroupContainingHwnd permissionHandles.Head).Value
                 desktopApi.restartGroup(replacement.hwnd,false)
                 pumpUntil "Disabling combine did not remove taskbar proxy ownership" (fun () ->
                     permissionHandles |> List.forall(fun hwnd -> not(TaskbarProxies.ownsWindow hwnd)))
-                check (WinUserApi.GetForegroundWindow()=unrelated.Handle && unrelatedAboveGroup())
+                check (WinUserApi.GetForegroundWindow()=foregroundBeforeToggle && unrelatedAboveGroup())
                       "Disabling combined icons changed unrelated foreground stacking"
                 check (permissionHandles |> List.forall WinUserApi.IsWindow)
                       "Changing combined-taskbar mode destroyed a native application window"
