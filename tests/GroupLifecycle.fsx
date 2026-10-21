@@ -895,9 +895,9 @@ let main() =
             let following = desktopApi.createGroup(false) :?> GroupInfo
             following.ruleGroupId <- Some "project-a"
             let chosen = desktopApi.createGroup(false) :?> GroupInfo
-            (following :> IGroup).addWindow(a,false)
+            for hwnd in [a;d] do (following :> IGroup).addWindow(hwnd,false)
             (chosen :> IGroup).addWindow(b,false)
-            pumpUntil "Groups did not acquire their windows" (fun () -> nativeOrder following = [a] && nativeOrder chosen = [b])
+            pumpUntil "Groups did not acquire their windows" (fun () -> nativeOrder following = [a;d] && nativeOrder chosen = [b])
             let choices = { iconOnly=true; dock=TabDockLeft; columnWidth=280; alignments=[TabUp,TabRight]; autoHideMode=Some "Always" }
             let savedChoices = onGroup following (fun group -> group.applyMenuChoices choices; group.menuChoices)
             // Preserve relative global z-order when toggling an *inactive* group.
@@ -905,7 +905,8 @@ let main() =
             // be placed behind member HWNDs before they acquire ownership.
             unrelatedWindow.insertAfter(WindowHandleTypes.HWND_TOP)
             check (unrelatedWindow.zorder < OS().windowFromHwnd(a).zorder &&
-                   unrelatedWindow.zorder < OS().windowFromHwnd(b).zorder)
+                   unrelatedWindow.zorder < OS().windowFromHwnd(b).zorder &&
+                   unrelatedWindow.zorder < OS().windowFromHwnd(d).zorder)
                   "Combine settings fixture did not establish background groups"
             let focusBeforeModeChange = WinUserApi.GetForegroundWindow()
             desktopApi.restartGroup(chosen.hwnd, true)
@@ -918,7 +919,7 @@ let main() =
                    unrelatedWindow.zorder < OS().windowFromHwnd(a).zorder)
                   "Enabling combined icons raised an inactive group or changed foreground"
             let rebuilt = (soleGroup a true).Value
-            check (nativeOrder rebuilt = [a]) "Rebuilt group lost its window"
+            check (nativeOrder rebuilt = [a;d]) "Rebuilt group lost its windows"
             check (rebuilt.ruleGroupId=Some "project-a") "Taskbar rebuild lost the named grouping target"
             check (onGroup rebuilt (fun group -> group.menuChoices) = savedChoices) "Rebuilt group lost its tab menu choices"
             api.setValue("combineIconsInTaskbar", box false)
