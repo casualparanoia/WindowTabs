@@ -343,6 +343,33 @@ let main() =
         check (permissionHandles |> List.map(fun hwnd -> WinUserApi.GetWindowLong(hwnd,WindowLongFieldOffset.GWL_EXSTYLE)) = permissionStyles)
               "Taskbar exit registration changed the application's original window styles"
 
+        // Exercise the *settings-equivalent* path, not just proxy adoption:
+        // changing the option rebuilds the group on a new STA. The unrelated
+        // window is above it throughout, and the original apps must survive.
+        do
+            let initial = desktopApi.createGroup(false) :?> GroupInfo
+            try
+                for hwnd in permissionHandles do (initial :> IGroup).addWindow(hwnd,false)
+                pumpUntil "Toggle fixture did not acquire both windows" (fun () -> nativeOrder initial=permissionHandles)
+                unrelatedWindow.setForeground(false)
+                check (WinUserApi.GetForegroundWindow()=unrelated.Handle && unrelatedAboveGroup())
+                      "Toggle fixture could not establish its foreground baseline"
+                desktopApi.restartGroup(initial.hwnd,true)
+                pumpUntil "Enabling combine did not replace the original group" (fun () ->
+                    initial.isExited && permissionHandles |> List.forall TaskbarProxies.ownsWindow)
+                check (WinUserApi.GetForegroundWindow()=unrelated.Handle && unrelatedAboveGroup())
+                      "Enabling combined icons brought background grouped windows above the active application"
+                let replacement = (desktop.findGroupContainingHwnd permissionHandles.Head).Value
+                desktopApi.restartGroup(replacement.hwnd,false)
+                pumpUntil "Disabling combine did not remove taskbar proxy ownership" (fun () ->
+                    permissionHandles |> List.forall(fun hwnd -> not(TaskbarProxies.ownsWindow hwnd)))
+                check (WinUserApi.GetForegroundWindow()=unrelated.Handle && unrelatedAboveGroup())
+                      "Disabling combined icons changed unrelated foreground stacking"
+                check (permissionHandles |> List.forall WinUserApi.IsWindow)
+                      "Changing combined-taskbar mode destroyed a native application window"
+            finally
+                desktop.findGroupContainingHwnd permissionHandles.Head
+                |> Option.iter(fun group -> group.destroy())
         // Placement failure keeps real windows independent; a later successful attempt may combine them.
         do
             use first = new Form(ShowInTaskbar=false)
