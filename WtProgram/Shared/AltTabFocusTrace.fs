@@ -48,14 +48,16 @@ module AltTabFocusTrace =
         with _ -> "unavailable"
 
     let private currentAttempt() = lock stateGate (fun () -> attempt)
-    let record (stage:string) (hwnd:IntPtr) (detail:string) =
+    // Delayed samples belong to the Alt+Tab attempt that scheduled them,
+    // even when another attempt begins before the sampling timer fires.
+    let private recordForAttempt (recordedAttempt:int) (stage:string) (hwnd:IntPtr) (detail:string) =
         if enabled then
             try
                 let foreground = WinUserApi.GetForegroundWindow()
                 let entry = JObject(
                     JProperty("utc",DateTime.UtcNow.ToString("O")),
                     JProperty("elapsedMs",clock.ElapsedMilliseconds),
-                    JProperty("attempt",currentAttempt()),
+                    JProperty("attempt",recordedAttempt),
                     JProperty("stage",stage),
                     JProperty("hwnd",hwnd.ToInt64()),
                     JProperty("foreground",foreground.ToInt64()),
@@ -63,10 +65,14 @@ module AltTabFocusTrace =
                 buffer.Enqueue(entry)
             with _ -> ()
 
-    let snapshot phase =
+    let record stage hwnd detail = recordForAttempt (currentAttempt()) stage hwnd detail
+
+    let private snapshotForAttempt recordedAttempt phase =
         if enabled then
             let foreground = WinUserApi.GetForegroundWindow()
-            record ("owner-chain-"+phase) foreground (ownerChain foreground)
+            recordForAttempt recordedAttempt ("owner-chain-"+phase) foreground (ownerChain foreground)
+
+    let snapshot phase = snapshotForAttempt (currentAttempt()) phase
 
     let private flush() =
         if enabled then
@@ -115,16 +121,18 @@ module AltTabFocusTrace =
                                 active
                             else false)
                         if wasAttempt then
-                            record "alt-released" IntPtr.Zero ""
+                            let releasedAttempt = currentAttempt()
+                            recordForAttempt releasedAttempt "alt-released" IntPtr.Zero ""
+                            snapshotForAttempt releasedAttempt "alt-release"
                             // The shell can activate the selected window *after* Alt-up.
-                            // Delayed samples help identify late activation or reassertion.
+                            // Keep sample IDs stable if the user switches again quickly.
                             ThreadPool.QueueUserWorkItem(fun _ ->
                                 Thread.Sleep(200)
-                                record "sample-200ms" IntPtr.Zero ""
-                                snapshot "200ms"
+                                recordForAttempt releasedAttempt "sample-200ms" IntPtr.Zero ""
+                                snapshotForAttempt releasedAttempt "200ms"
                                 Thread.Sleep(600)
-                                record "sample-800ms" IntPtr.Zero ""
-                                snapshot "800ms") |> ignore
+                                recordForAttempt releasedAttempt "sample-800ms" IntPtr.Zero ""
+                                snapshotForAttempt releasedAttempt "800ms") |> ignore
                     elif tab && down then
                         let isAlt = (data.flags &&& LlKeyboardHookFlags.LLKHF_ALTDOWN) <> 0 ||
                                     lock stateGate (fun () -> altDown)

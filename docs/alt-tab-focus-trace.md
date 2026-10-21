@@ -129,3 +129,31 @@ mechanism could introduce unwanted focus changes on minimize/restore.
 For concise review after your session, upload the whole
 `focus-trace.jsonl` rather than relying on F11/F12 annotations alone;
 the return-to-start samples may detect unmarked incidents.
+
+
+## Proxy activation correlation (follow-up to PR #8)
+
+With `focus-trace.enabled` present at launch, WindowTabs also records
+`taskbar-proxy-activation` for its own combined host and per-tab proxies.
+Each event names the role and carries the raw Win32 message ID and
+`wParam`/`lParam` values for `WM_ACTIVATE` (0x06),
+`WM_ACTIVATEAPP` (0x1C), `WM_MOUSEACTIVATE` (0x21), and
+`WM_NCACTIVATE` (0x86). Parameter meanings are **message-specific**;
+do not interpret `lParam` as a HWND for every message.
+
+The recorder additionally takes `owner-chain-alt-release` immediately
+after releasing Alt. Delayed 200/800 ms records now preserve the **original**
+Alt+Tab attempt ID, even if a subsequent press occurs before the sample.
+If presses overlap, a late sample still describes foreground at its actual
+sample time; it is **not** reliable evidence that the earlier attempt failed.
+
+Compare `taskbar-proxy-activation`, `os-foreground`, Alt-release snapshots
+and the existing `switcher-*` WinEvents. These messages reveal how our
+proxy windows react during shell switching; they do **not** expose which
+Alt+Tab tile the user selected. We deliberately do not hook external
+application WndProcs, alter proxy styles or modify focus behavior. An
+absence of proxy activation messages is not proof the proxy was uninvolved.
+
+For a useful controlled session, compare the same two applications with
+taskbar combining off, on, then off. Mark an observed failed selection via
+Ctrl+Shift+F12, and retain the full JSONL file for correlation.

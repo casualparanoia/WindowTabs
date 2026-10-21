@@ -275,6 +275,7 @@ and TbButtonTab = {
     }
 
 type DwmWindow = {
+    role: string
     style: int
     exStyle: int
     handler: Win32Message -> int
@@ -358,6 +359,7 @@ type TaskBarButton(info) as this =
         let config() : TbButton = infoCell.value.Value
         
         let rec window = this.createDwmWindow {
+            role = "combined-host"
             //if you don't assign popup, the style will default to WS_CAPTION which ends up performing
             //hittesting and stealing mouse input, i.e. the window will not be transparent to mouse in upper left corner
             style = WindowsStyles.WS_POPUP
@@ -524,6 +526,13 @@ type TaskBarButton(info) as this =
     member this.createDwmWindow (dwmWindow:DwmWindow) : Window =
         let wndProc m =
             let ({hwnd=hwnd; msg=msg; wParam=wParam; lParam=lParam}) = m
+            // Only our own proxy WndProcs can be observed here. Application
+            // WndProc activation messages are outside this process.
+            if AltTabFocusTrace.enabled &&
+                (msg=0x06 || msg=0x1C || msg=0x21 || msg=0x86) then
+                AltTabFocusTrace.record "taskbar-proxy-activation" hwnd
+                    (sprintf "role=%s message=0x%X wParam=%d lParam=%d"
+                        dwmWindow.role msg (wParam.ToInt64()) (lParam.ToInt64()))
             // WM_ACTIVATE, WM_SHOWWINDOW, WM_ACTIVATEAPP, WM_MOUSEACTIVATE, WM_SYSCOMMAND
             if msg=0x06 || msg=0x18 || msg=0x1C || msg=0x21 || msg=0x112 then
                 TaskbarPreviewTrace.write "message" hwnd "" (sprintf "msg=0x%X wParam=0x%X" msg (wParam.ToInt64()))
@@ -575,6 +584,7 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
     let os = OS()
     let mutable ownedWindow = IntPtr.Zero
     let rec _window = parent.createDwmWindow {
+            role = "per-tab-proxy"
             style = WindowsStyles.WS_POPUP
             exStyle = WindowsExtendedStyles.WS_EX_LAYERED
             activate = fun() -> config().activate()
