@@ -344,34 +344,6 @@ let main() =
         check (permissionHandles |> List.map(fun hwnd -> WinUserApi.GetWindowLong(hwnd,WindowLongFieldOffset.GWL_EXSTYLE)) = permissionStyles)
               "Taskbar exit registration changed the application's original window styles"
 
-        // Exercise the *settings-equivalent* path, not just proxy adoption:
-        // changing the option rebuilds the group on a new STA. The unrelated
-        // window is above it throughout, and the original apps must survive.
-        do
-            let initial = desktopApi.createGroup(false) :?> GroupInfo
-            try
-                for hwnd in permissionHandles do (initial :> IGroup).addWindow(hwnd,false)
-                pumpUntil "Toggle fixture did not acquire both windows" (fun () -> nativeOrder initial=permissionHandles)
-                unrelatedWindow.insertAfter(WindowHandleTypes.HWND_TOP)
-                check (unrelatedAboveGroup())
-                      "Toggle fixture could not establish its relative z-order baseline"
-                let foregroundBeforeToggle = WinUserApi.GetForegroundWindow()
-                desktopApi.restartGroup(initial.hwnd,true)
-                pumpUntil "Enabling combine did not replace the original group" (fun () ->
-                    initial.isExited && permissionHandles |> List.forall TaskbarProxies.ownsWindow)
-                check (WinUserApi.GetForegroundWindow()=foregroundBeforeToggle && unrelatedAboveGroup())
-                      "Enabling combined icons changed foreground or raised background grouped windows"
-                let replacement = (desktop.findGroupContainingHwnd permissionHandles.Head).Value
-                desktopApi.restartGroup(replacement.hwnd,false)
-                pumpUntil "Disabling combine did not remove taskbar proxy ownership" (fun () ->
-                    permissionHandles |> List.forall(fun hwnd -> not(TaskbarProxies.ownsWindow hwnd)))
-                check (WinUserApi.GetForegroundWindow()=foregroundBeforeToggle && unrelatedAboveGroup())
-                      "Disabling combined icons changed unrelated foreground stacking"
-                check (permissionHandles |> List.forall WinUserApi.IsWindow)
-                      "Changing combined-taskbar mode destroyed a native application window"
-            finally
-                desktop.findGroupContainingHwnd permissionHandles.Head
-                |> Option.iter(fun group -> group.destroy())
         // Placement failure keeps real windows independent; a later successful attempt may combine them.
         do
             use first = new Form(ShowInTaskbar=false)
@@ -928,17 +900,33 @@ let main() =
             pumpUntil "Groups did not acquire their windows" (fun () -> nativeOrder following = [a] && nativeOrder chosen = [b])
             let choices = { iconOnly=true; dock=TabDockLeft; columnWidth=280; alignments=[TabUp,TabRight]; autoHideMode=Some "Always" }
             let savedChoices = onGroup following (fun group -> group.applyMenuChoices choices; group.menuChoices)
+            // Preserve relative global z-order when toggling an *inactive* group.
+            // A newly created shared taskbar host and its per-tab proxies must
+            // be placed behind member HWNDs before they acquire ownership.
+            unrelatedWindow.insertAfter(WindowHandleTypes.HWND_TOP)
+            check (unrelatedWindow.zorder < OS().windowFromHwnd(a).zorder &&
+                   unrelatedWindow.zorder < OS().windowFromHwnd(b).zorder)
+                  "Combine settings fixture did not establish background groups"
+            let focusBeforeModeChange = WinUserApi.GetForegroundWindow()
             desktopApi.restartGroup(chosen.hwnd, true)
             pumpUntil "Tab menu did not combine its group's taskbar icons" (fun () -> (soleGroup b true).IsSome)
             let chosenNow = (soleGroup b true).Value
             api.setValue("combineIconsInTaskbar", box true)
             pumpUntil "Setting did not combine an open group's taskbar icons" (fun () -> (soleGroup a true).IsSome)
+            pumpUntil "Replaced ordinary group did not retire" (fun () -> following.isExited)
+            check (WinUserApi.GetForegroundWindow()=focusBeforeModeChange &&
+                   unrelatedWindow.zorder < OS().windowFromHwnd(a).zorder)
+                  "Enabling combined icons raised an inactive group or changed foreground"
             let rebuilt = (soleGroup a true).Value
             check (nativeOrder rebuilt = [a]) "Rebuilt group lost its window"
             check (rebuilt.ruleGroupId=Some "project-a") "Taskbar rebuild lost the named grouping target"
             check (onGroup rebuilt (fun group -> group.menuChoices) = savedChoices) "Rebuilt group lost its tab menu choices"
             api.setValue("combineIconsInTaskbar", box false)
             pumpUntil "Setting did not separate an open group's taskbar icons" (fun () -> (soleGroup a false).IsSome)
+            pumpUntil "Replaced combined group did not retire" (fun () -> rebuilt.isExited)
+            check (WinUserApi.GetForegroundWindow()=focusBeforeModeChange &&
+                   unrelatedWindow.zorder < OS().windowFromHwnd(a).zorder)
+                  "Disabling combined icons raised an inactive group or changed foreground"
             check (soleGroup b true = Some chosenNow) "Setting overrode a group's taskbar choice from its tab menu"
             // Turned back before the rebuild runs, the group stays as it is.
             let separate = (soleGroup a false).Value
