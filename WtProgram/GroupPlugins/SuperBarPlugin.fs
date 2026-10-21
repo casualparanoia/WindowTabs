@@ -633,13 +633,15 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
     member this.adoptWindow hwnd =
         if WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)<>_window.hwnd then
             StartupTrace.measure "taskbar.owner" (fun () ->
-                WinUserApi.SetWindowLong(hwnd,WindowLongFieldOffset.GWL_HWNDPARENT,_window.hwnd) |> ignore
-                // A new owner keeps its place in the z-order, which can be above the window it now
-                // owns. Activating that window then raised nothing: Windows raises a window by its
-                // top owner, already on top, so the window stayed under other tabs. The preview
-                // goes just below the window, as an owner would be.
+                // Position the preview *before* the application becomes owned.
+                // A freshly created proxy is initially high in global z-order;
+                // assigning it as owner first can pull an inactive application's
+                // entire owner chain above the user's unrelated foreground app.
+                // Do not reposition the proxy's own shared taskbar host.
                 WinUserApi.SetWindowPos(_window.hwnd,hwnd,0,0,0,0,
-                    SetWindowPosFlags.SWP_NOMOVE ||| SetWindowPosFlags.SWP_NOSIZE ||| SetWindowPosFlags.SWP_NOACTIVATE) |> ignore)
+                    SetWindowPosFlags.SWP_NOMOVE ||| SetWindowPosFlags.SWP_NOSIZE |||
+                    SetWindowPosFlags.SWP_NOACTIVATE ||| SetWindowPosFlags.SWP_NOOWNERZORDER) |> ignore
+                WinUserApi.SetWindowLong(hwnd,WindowLongFieldOffset.GWL_HWNDPARENT,_window.hwnd) |> ignore)
         ownedWindow <- hwnd
 
     /// Destroying an owner also destroys its owned windows; a preview never owns their lifetime.
@@ -804,6 +806,16 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
                          (desktop |> Option.exists(fun target ->
                              WindowCloaking.IsConcreteDesktopId target && placeDesktop(owner,target)))
             if placed then
+                // The newly created shared taskbar host normally starts near the
+                // top of global z-order. Adopted applications must sit above this
+                // owner. Put it just below the group's lowest window *before*
+                // ownership changes, so enabling combine on a background group
+                // does not deliberately pull those apps over unrelated windows.
+                if placedOwner=IntPtr.Zero && adopted.Count=0 then
+                    let bottom = this.members.list |> List.last
+                    WinUserApi.SetWindowPos(owner,bottom,0,0,0,0,
+                        SetWindowPosFlags.SWP_NOMOVE ||| SetWindowPosFlags.SWP_NOSIZE |||
+                        SetWindowPosFlags.SWP_NOACTIVATE ||| SetWindowPosFlags.SWP_NOOWNERZORDER) |> ignore
                 placedOwner <- owner
                 // Each application follows the desktop of the preview that owns it, so the
                 // previews go to the group's desktop before they take their applications.

@@ -283,6 +283,16 @@ let main() =
         use permissionSecond = new Form(ShowInTaskbar=false)
         let permissionHandles = [permissionFirst.Handle;permissionSecond.Handle]
         let permissionStyles = permissionHandles |> List.map(fun hwnd -> WinUserApi.GetWindowLong(hwnd,WindowLongFieldOffset.GWL_EXSTYLE))
+        // An unrelated foreground window must remain above an inactive group
+        // when its newly created taskbar proxies acquire native ownership.
+        use unrelated = new Form(ShowInTaskbar=false,StartPosition=FormStartPosition.Manual,
+                                 Bounds=Drawing.Rectangle(-19000,-19000,320,200))
+        let unrelatedWindow = OS().windowFromHwnd(unrelated.Handle)
+        for hwnd in permissionHandles do
+            OS().windowFromHwnd(hwnd).showWindow(ShowWindowCommands.SW_SHOWNOACTIVATE)
+        unrelatedWindow.showWindow(ShowWindowCommands.SW_SHOWNOACTIVATE)
+        let unrelatedAboveGroup() =
+            permissionHandles |> List.forall(fun hwnd -> unrelatedWindow.zorder < OS().windowFromHwnd(hwnd).zorder)
         let permissionProbe = desktopApi.createGroup(false) :?> GroupInfo
         let mutable compatible = true
         let permissionPlugin = onGroup permissionProbe (fun group ->
@@ -291,11 +301,22 @@ let main() =
             (plugin :> IPlugin).init()
             plugin)
         try
-            for hwnd in permissionHandles do (permissionProbe :> IGroup).addWindow(hwnd,false)
+            (permissionProbe :> IGroup).addWindow(permissionHandles.Head,false)
+            pumpUntil "Permission probe did not acquire its first window" (fun () ->
+                nativeOrder permissionProbe=[permissionHandles.Head])
+            unrelatedWindow.insertAfter(WindowHandleTypes.HWND_TOP)
+            check (unrelatedAboveGroup())
+                  "Background ownership fixture failed to establish an unrelated higher z-order window"
+            let foregroundBeforeAdoption = WinUserApi.GetForegroundWindow()
+            (permissionProbe :> IGroup).addWindow(permissionHandles.[1],false)
             pumpUntil "Permission probe did not acquire windows" (fun () -> nativeOrder permissionProbe=permissionHandles)
             let owner hwnd = WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)
             pumpUntil "Compatible input queues did not combine taskbar ownership" (fun () ->
                 permissionHandles |> List.forall TaskbarProxies.ownsWindow)
+            check (WinUserApi.GetForegroundWindow()=foregroundBeforeAdoption)
+                  "Taskbar proxy adoption changed native foreground activation"
+            check (unrelatedAboveGroup())
+                  "Enabling combined taskbar ownership raised grouped applications over an unrelated foreground window"
             let cloakTarget = onGroup permissionProbe (fun group -> group.topWindow)
             let mutable cloak = 1
             check (DwmApi.DwmSetWindowAttribute(cloakTarget,13,&cloak,4)=0) "Could not cloak input-isolation fixture"
@@ -874,22 +895,42 @@ let main() =
             let following = desktopApi.createGroup(false) :?> GroupInfo
             following.ruleGroupId <- Some "project-a"
             let chosen = desktopApi.createGroup(false) :?> GroupInfo
-            (following :> IGroup).addWindow(a,false)
+            for hwnd in [a;d] do (following :> IGroup).addWindow(hwnd,false)
             (chosen :> IGroup).addWindow(b,false)
-            pumpUntil "Groups did not acquire their windows" (fun () -> nativeOrder following = [a] && nativeOrder chosen = [b])
+            pumpUntil "Groups did not acquire their windows" (fun () -> nativeOrder following = [a;d] && nativeOrder chosen = [b])
             let choices = { iconOnly=true; dock=TabDockLeft; columnWidth=280; alignments=[TabUp,TabRight]; autoHideMode=Some "Always" }
             let savedChoices = onGroup following (fun group -> group.applyMenuChoices choices; group.menuChoices)
+            // Preserve relative global z-order when toggling an *inactive* group.
+            // A newly created shared taskbar host and its per-tab proxies must
+            // be placed behind member HWNDs before they acquire ownership.
+            unrelatedWindow.insertAfter(WindowHandleTypes.HWND_TOP)
+            check (unrelatedWindow.zorder < OS().windowFromHwnd(a).zorder &&
+                   unrelatedWindow.zorder < OS().windowFromHwnd(b).zorder &&
+                   unrelatedWindow.zorder < OS().windowFromHwnd(d).zorder)
+                  "Combine settings fixture did not establish background groups"
+            let focusBeforeModeChange = WinUserApi.GetForegroundWindow()
             desktopApi.restartGroup(chosen.hwnd, true)
             pumpUntil "Tab menu did not combine its group's taskbar icons" (fun () -> (soleGroup b true).IsSome)
             let chosenNow = (soleGroup b true).Value
             api.setValue("combineIconsInTaskbar", box true)
             pumpUntil "Setting did not combine an open group's taskbar icons" (fun () -> (soleGroup a true).IsSome)
+            pumpUntil "Replaced ordinary group did not retire" (fun () -> following.isExited)
+            check (WinUserApi.GetForegroundWindow()=focusBeforeModeChange &&
+                   unrelatedWindow.zorder < OS().windowFromHwnd(a).zorder)
+                  "Enabling combined icons raised an inactive group or changed foreground"
             let rebuilt = (soleGroup a true).Value
-            check (nativeOrder rebuilt = [a]) "Rebuilt group lost its window"
+            pumpUntil "Rebuilt combined group did not receive both windows" (fun () ->
+                Set.ofList (nativeOrder rebuilt) = Set.ofList [a;d])
             check (rebuilt.ruleGroupId=Some "project-a") "Taskbar rebuild lost the named grouping target"
             check (onGroup rebuilt (fun group -> group.menuChoices) = savedChoices) "Rebuilt group lost its tab menu choices"
             api.setValue("combineIconsInTaskbar", box false)
             pumpUntil "Setting did not separate an open group's taskbar icons" (fun () -> (soleGroup a false).IsSome)
+            pumpUntil "Replaced combined group did not retire" (fun () -> rebuilt.isExited)
+            pumpUntil "Rebuilt ordinary group did not receive both windows" (fun () ->
+                (soleGroup a false) |> Option.exists(fun group -> Set.ofList (nativeOrder group) = Set.ofList [a;d]))
+            check (WinUserApi.GetForegroundWindow()=focusBeforeModeChange &&
+                   unrelatedWindow.zorder < OS().windowFromHwnd(a).zorder)
+                  "Disabling combined icons raised an inactive group or changed foreground"
             check (soleGroup b true = Some chosenNow) "Setting overrode a group's taskbar choice from its tab menu"
             // Turned back before the rebuild runs, the group stays as it is.
             let separate = (soleGroup a false).Value

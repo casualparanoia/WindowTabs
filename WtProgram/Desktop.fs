@@ -214,7 +214,14 @@ type Desktop(notify:IDesktopNotification, settings:ISettings, dispatcher:IDispat
                         newGroup.group.groupToken <- old.group.groupToken
                         newGroup.invokeGroup(fun() -> newGroup.group.applyMenuChoices choices)
                         group.windows.iter <| fun hwnd ->
-                            newGroup.addAfterDetaching(old,hwnd))
+                            newGroup.addAfterDetaching(old,hwnd)
+                        // The replacement's source STA remains alive after the
+                        // last member has detached unless explicitly destroyed.
+                        // Queue teardown *after* every ordered source removal:
+                        // destroying earlier would also destroy HWNDs it owns.
+                        old.invokeGroup(fun () ->
+                            if not old.isExited && old.group.windows.isEmpty then
+                                old.group.destroy()))
 
     member this.restartGroup(groupHwnd, enableSuperBar) =
         this.groups.tryFind(fun g -> g.hwnd = groupHwnd && not g.isRetiring && g.isSuperBarEnabled <> enableSuperBar)
