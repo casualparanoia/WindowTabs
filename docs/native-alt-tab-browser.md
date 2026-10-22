@@ -12,7 +12,11 @@ without touching the user's existing browsing state.
 
 On an unlocked, idle Windows desktop, save your work, exit your **normal
 WindowTabs instance**, and preferably fully exit Flow Launcher while trying
-to isolate the original WindowTabs-only native Alt+Tab issue:
+to isolate the original WindowTabs-only native Alt+Tab issue. **You must
+also fully exit all Vivaldi processes, including background mode, before
+running this test**, because WindowTabs filters included browsers by
+executable path; it cannot otherwise distinguish the staged Vivaldi from
+your normal Vivaldi session:
 
 ```powershell
 pwsh -NoProfile -File .\tests\Run-DesktopE2E.ps1 `
@@ -42,6 +46,13 @@ intended as **a first functional check**, not a prolonged stress test.
   private `--user-data-dir` and disabling extensions, sync, and first-run
   prompts. The second launch should forward to the first isolated browser
   process. No normal profile path is used.
+- **Refuses startup if any same-name browser process is already running.**
+  This is essential: while the driver identifies its own browser by PID,
+  WindowTabs's `includedPaths` matches the **executable**, including all
+  user windows launched from the same installed binary. The test also
+  checks for unexpected external top-level browser HWNDs before grouping
+  and before every native switching pair. A failure here is a safety
+  preflight, not an Alt+Tab bug.
 - Identifies and allows input only to top-level `Chrome_WidgetWin_*`
   windows with the **exact PID of the browser process launched by this
   stage**. It does **not** attach to arbitrary same-executable windows.
