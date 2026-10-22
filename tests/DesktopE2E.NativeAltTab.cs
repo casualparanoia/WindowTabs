@@ -13,9 +13,6 @@ using System.Windows.Forms;
 
 static partial class DesktopE2E
 {
-    [DllImport("user32.dll", SetLastError=true)]
-    static extern bool SetForegroundWindow(IntPtr window);
-
     static IntPtr AltTabRootOwner(IntPtr hwnd)
     {
         var seen=new HashSet<IntPtr>();
@@ -89,9 +86,22 @@ static partial class DesktopE2E
             // Separate process/path: cannot be accidentally auto-grouped with
             // the two application HWNDs. It is our known external MRU target.
             phase="native Alt+Tab anchor";
-            var anchor=await StartAnchor();
-            Check(SetForegroundWindow(anchor.Window),"Cannot foreground the independent anchor window");
-            await Until("Independent anchor did not become foreground",
+            var anchor=await StartAnchor(verifyDesktop:false);
+            // This workload deliberately does not initialize virtual-desktop
+            // COM. Use a real mouse click to establish the independent
+            // foreground/MRU target rather than requesting SetForegroundWindow
+            // from a background driver (which Windows may deny).
+            var anchorRect=Bounds(anchor.Window);
+            var anchorPoint=new Point((anchorRect.Left+anchorRect.Right)/2,
+                                      (anchorRect.Top+anchorRect.Bottom)/2);
+            Check(WindowFromPoint(anchorPoint)==anchor.Window,
+                  "Independent anchor is occluded; refusing to click another window");
+            Move(anchorPoint);
+            await Task.Delay(35);
+            Inject(MouseInput(2));
+            await Task.Delay(35);
+            Inject(MouseInput(4));
+            await Until("Independent anchor did not become foreground after click",
                         ()=>GetForegroundWindow()==anchor.Window);
             var lastGroupMember=order.Last();
             // Alternate between anchor and the one combined group. This is
