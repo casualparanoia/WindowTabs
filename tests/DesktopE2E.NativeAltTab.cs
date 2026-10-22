@@ -95,6 +95,7 @@ static partial class DesktopE2E
         uint pid; GetWindowThreadProcessId(foreground,out pid);
         var allowed=pid==(uint)Process.GetCurrentProcess().Id ||
                     (app!=null && pid==(uint)app.Id) ||
+                    BrowserAllowedPids.Contains(pid) ||
                     Anchors.Any(a=>a.Process!=null && !a.Process.HasExited && pid==(uint)a.Process.Id);
         Check(allowed,"Unexpected foreground application before Alt+Tab; refusing to send input. HWND="+foreground);
         // Hold Alt briefly while the shell opens the switcher. Input is only
