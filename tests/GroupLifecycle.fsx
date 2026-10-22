@@ -342,8 +342,9 @@ let main() =
                 for hwnd in permissionHandles do (ownerlessGroup :> IGroup).addWindow(hwnd,false)
                 pumpUntil "Ownerless taskbar failed to register synthetic combined previews" (fun () ->
                     onGroup ownerlessGroup (fun _ -> ownerlessPlugin.isOwnerlessCombinedReady))
-                check (onGroup ownerlessGroup (fun _ -> ownerlessPlugin.preservesApplicationOwners &&
-                    ownerlessPlugin.taskbarVisibilityChanges>=2))
+                let preserving,taskbarChanges = onGroup ownerlessGroup (fun _ ->
+                    ownerlessPlugin.preservesApplicationOwners,ownerlessPlugin.taskbarVisibilityChanges)
+                check (preserving && taskbarChanges >= 2)
                       "Ownerless experiment did not manage separate app taskbar entries"
                 check (permissionHandles |> List.forall(fun hwnd ->
                     let _,owner,exstyle = originals |> List.find(fun (original,_,_) -> original=hwnd)
