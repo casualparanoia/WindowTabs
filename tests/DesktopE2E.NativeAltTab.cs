@@ -89,8 +89,10 @@ static partial class DesktopE2E
         throw new Exception("Malformed native owner chain in Alt+Tab fixture");
     }
 
-    static async Task NativeAltTabChord()
+    static async Task NativeAltTabChord(int holdAltMilliseconds=125)
     {
+        Check(holdAltMilliseconds>=20 && holdAltMilliseconds<=200,
+              "Native Alt+Tab key hold must be between 20 and 200ms");
         var foreground=GetForegroundWindow();
         uint pid; GetWindowThreadProcessId(foreground,out pid);
         var allowed=pid==(uint)Process.GetCurrentProcess().Id ||
@@ -101,7 +103,7 @@ static partial class DesktopE2E
         // Hold Alt briefly while the shell opens the switcher. Input is only
         // sent from an explicitly opted-in interactive desktop E2E run.
         Inject(KeyInput(0x12,false),KeyInput(0x09,false),KeyInput(0x09,true));
-        await Task.Delay(125);
+        await Task.Delay(holdAltMilliseconds);
         Inject(KeyInput(0x12,true));
     }
 
