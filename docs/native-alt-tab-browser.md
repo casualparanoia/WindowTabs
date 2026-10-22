@@ -68,11 +68,35 @@ intended as **a first functional check**, not a prolonged stress test.
   Unexpected foregrounds write `foreground-mismatch.json` with native
   PID, process, class, owner and observed foreground changes.
 - Cleanup closes only the specific staged browser windows and spawned
-  browser process handles, and removes the temporary profile if Chromium
-  has released its files. It never issues `taskkill /IM vivaldi.exe`,
-  `Get-Process vivaldi | Stop-Process`, or closes user profile windows.
-  If files remain locked, the staged profile can be cleaned manually
-  after the isolated browser exits.
+  browser process handles; it gives those processes time to exit normally,
+  then waits for any explicitly spawned PID it must terminate. It retries
+  removal of **only the unique stage's** temporary profile for a bounded
+  interval to allow browser storage/SQLite handles to close.
+  It writes `browser-cleanup.json` with the spawned PIDs' exit status,
+  profile-removal outcome, retry count and error information. It never issues
+  `taskkill /IM vivaldi.exe`, `Get-Process vivaldi | Stop-Process`,
+  or closes normal browsing-session windows. If files remain locked, the
+  disposable profile is left in place rather than pretending cleanup
+  succeeded. Once the staged processes exit, it can be removed manually
+  without touching the user's ordinary browser profile.
+
+### Browser startup stderr and cleanup interpretation
+
+- A second Vivaldi launch may print `Opening in existing browser session`
+  as its `--new-window` request is forwarded to the first *isolated-profile*
+  Vivaldi process. The test separately verifies that two browser HWNDs were
+  actually created in the stage's expected PID; the message alone does
+  **not** establish that the user's ordinary session was reused.
+- A fresh disposable Vivaldi profile may log missing
+  `search_engines.json`/`search_engines_prompt.json` files. Vivaldi Mail
+  may additionally log an IndexedDB/LevelDB initialization error, which
+  is **not** proof that the Alt+Tab switching failed. Its cause is not
+  established by the native switching test; do not hide this stderr.
+- The first real browser test passed 20/20 native Alt+Tab switches but
+  logged `Isolated browser profile cleanup deferred: IOException`.
+  That is a **cleanup defect**, separate from foreground/owner/visual
+  switching success. The bounded-retry cleanup and JSON report are added
+  to make future outcomes explicit.
 
 **Important limitation:** The profile is disposable but the browser is
 still a real installed application. A system policy, a first-run prompt,
