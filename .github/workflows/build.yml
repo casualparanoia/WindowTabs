@@ -44,6 +44,15 @@ jobs:
         shell: pwsh
         run: ./tests/Run-DesktopE2E.ps1 -BuildOnly -ReleaseExecutable ./WtProgram/bin/Release/WindowTabs.exe
 
+      # Passive manual foreground recorder is not run in CI; compile only.
+      - name: Compile passive Alt+Tab recorder (Windows PowerShell)
+        shell: powershell
+        run: ./tests/Run-PassiveAltTabTrace.ps1 -BuildOnly
+
+      - name: Compile passive Alt+Tab recorder (PowerShell 7)
+        shell: pwsh
+        run: ./tests/Run-PassiveAltTabTrace.ps1 -BuildOnly
+
       - name: Upload Release diagnostics
         if: always()
         uses: actions/upload-artifact@v6
