@@ -132,6 +132,13 @@ if ($AltTabBrowser) {
         ([IO.Path]::GetFileName($browserPath) -notin @('vivaldi.exe','chrome.exe','chromium.exe','msedge.exe'))) {
         throw 'BrowserExecutable must be a Chromium-family browser executable (Vivaldi/Chrome/Chromium/Edge).'
     }
+    # WindowTabs settings include the browser by executable path, which
+    # would include the user's *normal* browser HWNDs too. Require a fully
+    # exited browser (not merely closed windows / background-mode processes).
+    $browserName = [IO.Path]::GetFileNameWithoutExtension($browserPath)
+    if (Get-Process -Name $browserName -ErrorAction SilentlyContinue) {
+        throw "Exit every running $browserName process before AltTabBrowser; the isolated fixture must not risk grouping your ordinary browser windows."
+    }
     # File avoids PowerShell Start-Process's space-sensitive argument
     # quoting, and is read only by this E2E stage's own driver.
     Set-Content -LiteralPath (Join-Path $stage 'browser-executable.txt') -Value $browserPath -NoNewline
