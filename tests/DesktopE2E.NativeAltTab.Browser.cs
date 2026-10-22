@@ -45,6 +45,35 @@ static partial class DesktopE2E
             Class(h).StartsWith("Chrome_WidgetWin_",StringComparison.Ordinal)).ToList();
     }
 
+    static void CheckNoUnrelatedBrowserWindows(int stagedPid, string browserName)
+    {
+        // WindowTabs includedPaths matches an *executable*, not a specific
+        // PID. If ordinary browser windows enter while this test runs,
+        // WindowTabs could group them even though the driver never clicks
+        // them. Refuse all foreign same-browser top-level HWNDs.
+        var unrelated=new List<object>();
+        EnumWindows((hwnd,data)=>{
+            if(!IsWindowVisible(hwnd) ||
+               !Class(hwnd).StartsWith("Chrome_WidgetWin_",StringComparison.Ordinal))
+                return true;
+            uint ownerPid; GetWindowThreadProcessId(hwnd,out ownerPid);
+            if(ownerPid==(uint)stagedPid) return true;
+            try
+            {
+                using(var process=Process.GetProcessById((int)ownerPid))
+                    if(string.Equals(process.ProcessName,browserName,
+                                      StringComparison.OrdinalIgnoreCase))
+                        unrelated.Add(new {hwnd=hwnd.ToInt64(),pid=ownerPid});
+            }
+            catch(Exception) { }
+            return true;
+        },IntPtr.Zero);
+        Check(unrelated.Count==0,
+              "A foreign browser window exists. Exit regular browser sessions and retry "+
+              "the isolated fixture; refusing to risk grouping personal windows. "+
+              Json.Serialize(unrelated.ToArray()));
+    }
+
     static List<IntPtr> BrowserGroupStrips(int appPid, IEnumerable<IntPtr> expectedWindows)
     {
         var expected=new HashSet<IntPtr>(expectedWindows);
@@ -134,6 +163,19 @@ static partial class DesktopE2E
         var filename=Path.GetFileName(executable).ToLowerInvariant();
         Check(new[]{"vivaldi.exe","chrome.exe","chromium.exe","msedge.exe"}.Contains(filename),
               "Only Chromium-family browsers are supported by the isolated fixture");
+        var browserName=Path.GetFileNameWithoutExtension(executable);
+        // Important: staged WindowTabs filters by executable path, NOT just
+        // the staged PID. Refuse to start if the user has any normal browser
+        // instance of the same name, including background resident processes.
+        var preexisting=Process.GetProcessesByName(browserName);
+        try
+        {
+            Check(preexisting.Length==0,
+                  "Close all existing "+browserName+" processes before testing; "+
+                  "WindowTabs includedPaths cannot isolate a personal browser session "+
+                  "from a staged session of the same executable.");
+        }
+        finally { foreach(var existing in preexisting) existing.Dispose(); }
         GetCursorPos(out savedCursor);
         inputOwned=true;
 
@@ -173,9 +215,9 @@ static partial class DesktopE2E
                 windows=browserWindows.Select(h=>h.ToInt64()).ToArray()
             });
 
-            // Add only the explicit browser executable to WindowTabs's staged
-            // portable settings. No running personal browser HWND is in this
-            // fixture's browser PID allowlist or WindowTabs includedPaths.
+            // IncludedPaths targets the whole browser executable, not a PID:
+            // demand exclusive use of this browser name while grouping.
+            CheckNoUnrelatedBrowserWindows(browserPid,browserName);
             Fixture(true,"auto",executable);
             phase="isolated browser WindowTabs grouping";
             app=Process.Start(new ProcessStartInfo(Path.Combine(Root,"WindowTabs.exe")) {
@@ -202,6 +244,7 @@ static partial class DesktopE2E
             for(int i=0;i<switches;i+=2)
             {
                 step="prepare browser pair "+(i/2+1);
+                CheckNoUnrelatedBrowserWindows(browserPid,browserName);
                 var member=members[(i/2)%2];
                 Remember("browser-rotate-member",new {pair=i/2,member=member.ToInt64()});
                 await Click(strip,(i/2)%2,2);
