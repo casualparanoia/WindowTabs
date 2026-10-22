@@ -212,8 +212,8 @@ static partial class DesktopE2E
                         sharedGroupRoot=AltTabRootOwner(order[0]).ToInt64(),
                         foregroundTransitions=transitions.ToArray()
                     };
-                    File.WriteAllText(System.IO.Path.Combine(Root,"foreground-mismatch.json"),
-                                      Json.Serialize(failureContext));
+                    System.IO.File.WriteAllText(System.IO.Path.Combine(Root,"foreground-mismatch.json"),
+                                                Json.Serialize(failureContext));
                     Remember("native-alt-tab-mismatch",failureContext);
                 }
                 Check(observed==expected,
