@@ -15,6 +15,43 @@ static partial class DesktopE2E
 {
     [DllImport("user32.dll")]
     static extern IntPtr GetAncestor(IntPtr window, uint flags);
+    [DllImport("user32.dll")]
+    static extern IntPtr GetLastActivePopup(IntPtr window);
+
+    // Captured synchronously on the first *unexpected* foreground HWND,
+    // before teardown. The general Diagnose() snapshot only enumerates
+    // WindowTabs + local helper HWNDs, so it cannot identify an unrelated
+    // Explorer/launcher/app window that stole focus. No window titles, file
+    // paths, arguments, or keyboard data are included.
+    static object DescribeNativeAltTabWindow(IntPtr hwnd)
+    {
+        if(hwnd==IntPtr.Zero || !IsWindow(hwnd))
+            return new {hwnd=hwnd.ToInt64(),exists=false};
+        uint pid;
+        uint thread=GetWindowThreadProcessId(hwnd,out pid);
+        string process="unavailable";
+        try
+        {
+            using(var info=Process.GetProcessById((int)pid))
+                process=info.ProcessName;
+        }
+        catch(Exception) { }
+        var owner=GetWindow(hwnd,4);
+        var root=IntPtr.Zero;
+        try { root=AltTabRootOwner(hwnd); } catch(Exception) { }
+        var popup=GetLastActivePopup(root==IntPtr.Zero?hwnd:root);
+        return new {
+            hwnd=hwnd.ToInt64(),exists=true,pid,thread,process,
+            windowClass=Class(hwnd),visible=IsWindowVisible(hwnd),
+            minimized=IsIconicForAltTab(hwnd),
+            owner=owner.ToInt64(),rootOwner=root.ToInt64(),
+            lastActivePopup=popup.ToInt64(),
+            exStyle=GetWindowLong(hwnd,-20)
+        };
+    }
+
+    [DllImport("user32.dll")]
+    static extern bool IsIconicForAltTab(IntPtr window);
 
     // GA_ROOT=2. WindowFromPoint can return a child control instead of the
     // visible top-level application window, so normalize its hit-test result.
@@ -142,17 +179,47 @@ static partial class DesktopE2E
                     expected=expected.ToInt64(),groupRoot=AltTabRootOwner(lastGroupMember).ToInt64()});
                 await NativeAltTabChord();
                 var timeout=Stopwatch.StartNew();
+                var transitions=new List<object>();
+                var previousForeground=before;
                 while(GetForegroundWindow()!=expected && timeout.ElapsedMilliseconds<1600)
                 {
+                    var sampled=GetForegroundWindow();
+                    if(sampled!=previousForeground)
+                    {
+                        transitions.Add(new {elapsedMs=timeout.ElapsedMilliseconds,hwnd=sampled.ToInt64()});
+                        previousForeground=sampled;
+                    }
                     await Task.Delay(25);
                 }
                 var observed=GetForegroundWindow();
                 Remember("native-alt-tab-after",new {index=i,expected=expected.ToInt64(),
                     observed=observed.ToInt64(),delayMs=timeout.ElapsedMilliseconds,
                     owner=observed==IntPtr.Zero?0:GetWindow(observed,4).ToInt64()});
+                if(observed!=expected)
+                {
+                    // This failure may be a *third application's* HWND,
+                    // rather than the anchor or either group member.
+                    // Preserve enough role/owner metadata to distinguish
+                    // interference from a genuine grouped-tab handoff bug.
+                    var failureContext=new {
+                        index=i,elapsedMs=timeout.ElapsedMilliseconds,
+                        before=DescribeNativeAltTabWindow(before),
+                        expected=DescribeNativeAltTabWindow(expected),
+                        observed=DescribeNativeAltTabWindow(observed),
+                        anchor=DescribeNativeAltTabWindow(anchor.Window),
+                        memberA=DescribeNativeAltTabWindow(order[0]),
+                        memberB=DescribeNativeAltTabWindow(order[1]),
+                        sharedGroupRoot=AltTabRootOwner(order[0]).ToInt64(),
+                        foregroundTransitions=transitions.ToArray()
+                    };
+                    File.WriteAllText(System.IO.Path.Combine(Root,"foreground-mismatch.json"),
+                                      Json.Serialize(failureContext));
+                    Remember("native-alt-tab-mismatch",failureContext);
+                }
                 Check(observed==expected,
                       "Native Explorer Alt+Tab selected/activated unexpected HWND at step "+i+
-                      "; expected="+expected+" actual="+observed);
+                      "; expected="+expected+" actual="+observed+
+                      " (see foreground-mismatch.json for process and owner details)");
                 // Foreground HWND alone can look correct while another
                 // grouped application visually covers the active member.
                 // Probe the center of the fixture's blank WinForms client
