@@ -45,8 +45,10 @@ It does **not** enable `focus-trace.enabled`, register any keyboard
 hook, subscribe to system foreground events, poll, or capture window
 contents/titles, executable names, paths, or keystrokes. It records
 only real Windows messages received by WindowTabs' **own** proxy HWNDs
-and WindowTabs' own tab activation dispatches. Logs rotate around
-2 MiB into `activation-probe.previous.jsonl`. Unlink the marker and
+and WindowTabs' own tab activation dispatches, plus relevant foreground
+events already handled by the group's existing WinEvent subscription.
+It does not register any new hook. Logs rotate around 2 MiB into
+`activation-probe.previous.jsonl`. Unlink the marker and
 restart to turn it off.
 
 Main stages:
@@ -60,6 +62,7 @@ Main stages:
 | `tab-activation-enter` | WindowTabs requested activation of a real app; not necessarily initiated by Alt+Tab |
 | `tab-activation-after-request` | Observed foreground immediately after `SetForegroundWindow` or restore; NOT the native BOOL return |
 | `tab-activation-after-zorder` | Observed foreground and native internal group z-order following `BringWindowToTop` and conditional `raise` |
+| `group-foreground-event` | An existing native foreground callback arrived for a grouped HWND, the current foreground was a group member, or the cached foreground just left the group; includes callback HWND and current actual HWND separately |
 
 A monotonically increasing `seq` makes event order reconstructible
 even though disk writes are asynchronous. `foreground` is the
@@ -77,6 +80,12 @@ Interpret cautiously:
 - No callback near a user-observed failure: may be a direct app
   activation, Explorer behavior, or a path the probe doesn't observe.
   **It does not prove Explorer picked the wrong tile**.
+
+The new `group-foreground-event` stage records only group-relevant events
+from the **existing** WinEvent handler. In particular, it can show a real
+app entered the foreground without a matching proxy activation callback.
+That is consistent with direct native selection; it still does not reveal
+the highlighted Explorer tile.
 
 A native regression invokes `WM_ACTIVATE` on real synthetic host and
 tab-proxy HWNDs to verify WndProc callback dispatch. Synthetic
