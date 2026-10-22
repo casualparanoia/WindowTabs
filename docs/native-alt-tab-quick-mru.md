@@ -45,9 +45,13 @@ root. Both create *two* real Vivaldi browser windows in a unique
 `browser-profile` stage, plus a separate test anchor; the difference
 is whether the browser windows are grouped by WindowTabs.
 
-In both, establish the **known pair** once: click a real isolated browser
-window (or read/activate the selected group member), then click the
-independent anchor. Next, use 20 consecutive native Alt+Tab key sequences
+In both, establish the **known pair** once: after the new anchor is
+created, click a real isolated browser window (or explicitly click the
+selected WindowTabs group member **again**), verify it is foreground,
+then click the independent anchor. The grouped fixture must not assert
+browser foreground immediately after an earlier anchor click: that was
+a harness setup defect observed in its first interactive run. Next,
+use 20 consecutive native Alt+Tab key sequences
 expected to alternate **browser ↔ anchor**. No mouse, group-member
 rotation, foreground forcing, or MRU re-priming occurs between switches.
 
@@ -85,3 +89,17 @@ overlays rather than automatically blamed on WindowTabs.
   A/B run remains necessary.
 - Existing `-AltTabBrowser` baseline, lifecycle, WinForms, and
   two-group modes are unchanged. No WindowTabs production code changes.
+
+## Initial live A/B finding and harness correction
+
+The first A/B attempt on 2026-10-22 had **A: PASS 20/20** using
+ungrouped real Vivaldi, but **B failed before switch 1**. The
+`Activated` setup assertion logged expected Vivaldi HWND `1311098`,
+foreground anchor HWND `7014982`, and tab-strip owner
+`1311098`. The setup had just clicked the anchor and then incorrectly
+called `Activated` for the browser **without clicking the browser
+again**. This was a test-order error, not evidence of failed native
+Alt+Tab. The grouped quick-MRU setup now explicitly re-clicks the
+selected tab, verifies foreground and strip owner, then clicks the
+anchor and begins the uninterrupted chord series. Previously passing
+baseline and lifecycle modes are unchanged.
