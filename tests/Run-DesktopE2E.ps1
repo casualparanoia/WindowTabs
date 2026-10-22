@@ -1,4 +1,5 @@
 param([switch]$Interactive, [switch]$BuildOnly, [switch]$Describe, [switch]$VirtualDesktops,
+      [switch]$NativeAltTab, [ValidateRange(2, 200)][int]$AltTabSwitches = 20,
       [string]$ReleaseExecutable,
       [ValidateSet('Quick','Full','Soak')][string]$Profile = 'Full',
       [int]$Seed = 0,
@@ -8,6 +9,9 @@ param([switch]$Interactive, [switch]$BuildOnly, [switch]$Describe, [switch]$Virt
       [ValidateRange(0, 60)][int]$DurationMinutes = 0,
       [ValidateRange(60, 7200)][int]$TimeoutSeconds = 600)
 $ErrorActionPreference = 'Stop'
+if ($NativeAltTab -and $VirtualDesktops) { throw 'NativeAltTab and VirtualDesktops are independent workloads.' }
+if ($NativeAltTab -and $AltTabSwitches % 2) { throw 'AltTabSwitches must be an even number.' }
+if ($NativeAltTab -and (@('Profile','Switches','Cycles','DurationMinutes','Seed','RandomBatchesPerCycle') | Where-Object { $PSBoundParameters.ContainsKey($_) })) { throw 'Use only AltTabSwitches and TimeoutSeconds for the native Alt+Tab workload.' }
 if ($VirtualDesktops -and (@('Profile','Switches','Cycles','DurationMinutes','Seed','RandomBatchesPerCycle') | Where-Object { $PSBoundParameters.ContainsKey($_) })) {
     throw 'VirtualDesktops is a separate four-scenario workload; do not combine it with profile/switching options.'
 }
@@ -30,7 +34,9 @@ if ($DurationMinutes -gt 0 -and $TimeoutSeconds -lt ($DurationMinutes * 60 + 60)
 }
 $randomize = $Profile -eq 'Soak'
 if ($randomize -and -not $PSBoundParameters.ContainsKey('Seed')) { $Seed = Get-Random -Minimum 1 -Maximum ([int]::MaxValue) }
-$configuration = if ($VirtualDesktops) {
+$configuration = if ($NativeAltTab) {
+    [pscustomobject]@{ Workload='NativeAltTab'; Switches=$AltTabSwitches; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
+} elseif ($VirtualDesktops) {
     [pscustomobject]@{ Workload='VirtualDesktops'; Scenarios=4; TemporaryDesktops=2; TimeoutSeconds=$TimeoutSeconds }
 } else {
     [pscustomobject]@{ Profile=$Profile; Switches=$Switches; Cycles=$Cycles; DurationMinutes=$DurationMinutes; TimeoutSeconds=$TimeoutSeconds; Randomize=$randomize; Seed=$Seed; RandomBatchesPerCycle=$RandomBatchesPerCycle }
@@ -57,15 +63,15 @@ $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe'
 $hostExe = Join-Path $stage 'DesktopE2E.exe'
 Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes,WindowsBase
 $taskbarAutomationReferences = @([System.Windows.Automation.AutomationElement].Assembly.Location,[System.Windows.Automation.ControlType].Assembly.Location,[System.Windows.DependencyObject].Assembly.Location) | Select-Object -Unique | ForEach-Object { "/r:$_" }
-& $compiler /nologo /target:exe /platform:x86 "/out:$hostExe" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:Accessibility.dll @taskbarAutomationReferences "/win32manifest:$repo/WtProgram/app.manifest" (Join-Path $PSScriptRoot 'DesktopE2E.cs') (Join-Path $PSScriptRoot 'DesktopE2E.VirtualDesktops.cs')
+& $compiler /nologo /target:exe /platform:x86 "/out:$hostExe" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:Accessibility.dll @taskbarAutomationReferences "/win32manifest:$repo/WtProgram/app.manifest" (Join-Path $PSScriptRoot 'DesktopE2E.cs') (Join-Path $PSScriptRoot 'DesktopE2E.VirtualDesktops.cs') (Join-Path $PSScriptRoot 'DesktopE2E.NativeAltTab.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Desktop E2E compilation failed.' }
 & $hostExe --check-random-plan
 if ($LASTEXITCODE -ne 0) { throw 'Random action planner checks failed.' }
 @{ appSha256=(Get-FileHash -LiteralPath (Join-Path $stage 'WindowTabs.exe')).Hash; virtualDesktops=[bool]$VirtualDesktops; profile=$Profile; switches=$Switches; cycles=$Cycles; durationMinutes=$DurationMinutes; randomize=$randomize; seed=$Seed; randomBatchesPerCycle=$RandomBatchesPerCycle; randomPlanVersion=1; createdUtc=[DateTime]::UtcNow.ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'manifest.json')
 Write-Host "Desktop E2E artifacts: $stage"
 if ($BuildOnly) { return }
-if ($VirtualDesktops) { Copy-Item -LiteralPath $hostExe -Destination (Join-Path $stage 'DesktopAnchor.exe') }
-$driverArguments = if ($VirtualDesktops) { @('--virtual-desktops') } else { @('--run', "$Switches", "$Cycles", "$DurationMinutes", "$Seed", "$randomize", "$RandomBatchesPerCycle") }
+if ($VirtualDesktops -or $NativeAltTab) { Copy-Item -LiteralPath $hostExe -Destination (Join-Path $stage 'DesktopAnchor.exe') }
+$driverArguments = if ($NativeAltTab) { @('--native-alt-tab', "$AltTabSwitches") } elseif ($VirtualDesktops) { @('--virtual-desktops') } else { @('--run', "$Switches", "$Cycles", "$DurationMinutes", "$Seed", "$randomize", "$RandomBatchesPerCycle") }
 $process = Start-Process -FilePath $hostExe -ArgumentList $driverArguments -WorkingDirectory $stage -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $stage 'stdout.log') -RedirectStandardError (Join-Path $stage 'stderr.log')
 $handle = $process.Handle
 $shown = @{ 'stdout.log'=0; 'stderr.log'=0 }
@@ -90,6 +96,12 @@ $process.WaitForExit()
 Write-NewLogs
 if ($process.ExitCode -ne 0) { throw "Desktop E2E failed ($($process.ExitCode)); see $stage" }
 $report = Get-Content -LiteralPath (Join-Path $stage 'result.json') -Raw | ConvertFrom-Json
+if ($NativeAltTab) {
+    if ($report.status -ne 'passed' -or $report.verifiedSwitches -lt $AltTabSwitches -or $report.completedCycles -ne 1) {
+        throw 'Native Explorer Alt+Tab E2E failed to complete the expected foreground transitions.'
+    }
+    return
+}
 if ($VirtualDesktops) {
     $scenarios = @($report.virtualDesktopScenarios)
     if ($report.status -ne 'passed' -or -not $report.virtualDesktops -or $scenarios.Count -ne 4 -or
