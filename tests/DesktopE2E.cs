@@ -532,7 +532,7 @@ static partial class DesktopE2E
         if(args.Length==1 && args[0]=="--desktop-anchor") { RunDesktopAnchor(); return 0; }
         if(args.Length==1 && args[0]=="--check-random-plan") { CheckRandomPlan(); return 0; }
         bool virtualDesktops=args.Length==1 && args[0]=="--virtual-desktops";
-        bool nativeAltTab=args.Length==2 && args[0]=="--native-alt-tab";
+        bool nativeAltTab=args.Length==3 && args[0]=="--native-alt-tab";
         if(!virtualDesktops && !nativeAltTab && ((args.Length!=3 && args.Length!=4 && args.Length!=7) || args[0]!="--run")) { Console.Error.WriteLine("Use Run-DesktopE2E.ps1 -Interactive"); return 2; }
         if(args.Length==7) { seed=int.Parse(args[4]); randomize=bool.Parse(args[5]); randomBatchesPerCycle=int.Parse(args[6]); }
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
@@ -544,7 +544,7 @@ static partial class DesktopE2E
             start.Tick+=async (s,e)=> {
                 start.Stop();
                 try { if(virtualDesktops) await RunVirtualDesktops();
-                      else if(nativeAltTab) await RunNativeAltTab(int.Parse(args[1]));
+                      else if(nativeAltTab) await RunNativeAltTab(int.Parse(args[1]),bool.Parse(args[2]));
                       else await Run(int.Parse(args[1]),int.Parse(args[2]),args.Length>=4?int.Parse(args[3]):0);
                       code=0; }
                 catch(Exception error) { Console.Error.WriteLine(error); File.WriteAllText(Path.Combine(Root,"failure.txt"),error.ToString()); Diagnose(); }
