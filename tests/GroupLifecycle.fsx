@@ -323,6 +323,50 @@ let main() =
         check (permissionHandles |> List.map(fun hwnd -> WinUserApi.GetWindowLong(hwnd,WindowLongFieldOffset.GWL_EXSTYLE)) = permissionStyles)
               "Taskbar exit registration changed the application's original window styles"
 
+        // Ownerless experiment: the exact same synthetic TaskBarButton and
+        // registered DWM per-tab previews exist, but no external application
+        // has its GW_OWNER changed. Deleting the app's separate taskbar entry
+        // is an ITaskbarList operation, not a SetWindowLong operation.
+        do
+            let originals = permissionHandles |> List.map(fun hwnd ->
+                hwnd,WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER),
+                WinUserApi.GetWindowLong(hwnd,WindowLongFieldOffset.GWL_EXSTYLE))
+            let ownerlessGroup = desktopApi.createGroup(false) :?> GroupInfo
+            let ownerlessPlugin = onGroup ownerlessGroup (fun group ->
+                let plugin = SuperBarPlugin(group.canShareInput,
+                    desktopOf=(fun _ -> Some desk1),placeDesktop=(fun _ -> true),
+                    preserveApplicationOwners=true)
+                (plugin :> IPlugin).init()
+                plugin)
+            try
+                for hwnd in permissionHandles do (ownerlessGroup :> IGroup).addWindow(hwnd,false)
+                pumpUntil "Ownerless taskbar failed to register synthetic combined previews" (fun () ->
+                    onGroup ownerlessGroup (fun _ -> ownerlessPlugin.isOwnerlessCombinedReady))
+                check (onGroup ownerlessGroup (fun _ -> ownerlessPlugin.preservesApplicationOwners &&
+                    ownerlessPlugin.taskbarVisibilityChanges>=2))
+                      "Ownerless experiment did not manage separate app taskbar entries"
+                check (permissionHandles |> List.forall(fun hwnd ->
+                    let _,owner,exstyle = originals |> List.find(fun (original,_,_) -> original=hwnd)
+                    WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)=owner &&
+                    WinUserApi.GetWindowLong(hwnd,WindowLongFieldOffset.GWL_EXSTYLE)=exstyle))
+                      "Ownerless combined previews mutated a real application's owner or styles"
+                (ownerlessGroup :> IGroup).removeWindow(permissionHandles.[1])
+                pumpUntil "Ownerless taskbar did not release the removed member" (fun () ->
+                    nativeOrder ownerlessGroup=[permissionHandles.Head])
+                check (permissionHandles |> List.forall(fun hwnd ->
+                    let _,owner,_ = originals |> List.find(fun (original,_,_) -> original=hwnd)
+                    WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)=owner))
+                      "Ownerless teardown changed original owner after tab removal"
+            finally
+                (ownerlessGroup :> IGroup).destroy()
+                pumpUntil "Ownerless group was not destroyed" (fun () -> ownerlessGroup.isExited)
+            check (permissionHandles |> List.forall(fun hwnd ->
+                let _,owner,exstyle = originals |> List.find(fun (original,_,_) -> original=hwnd)
+                WinUserApi.IsWindow hwnd &&
+                WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)=owner &&
+                WinUserApi.GetWindowLong(hwnd,WindowLongFieldOffset.GWL_EXSTYLE)=exstyle))
+                  "Ownerless taskbar teardown changed a live application's original HWND"
+
         // Placement failure keeps real windows independent; a later successful attempt may combine them.
         do
             use first = new Form(ShowInTaskbar=false)
