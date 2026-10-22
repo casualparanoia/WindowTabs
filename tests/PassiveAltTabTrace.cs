@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -27,6 +28,10 @@ internal static class PassiveAltTabTrace
     struct Kbd {
         public uint vkCode, scanCode, flags, time;
         public IntPtr extraInfo;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct Rect {
+        public int Left,Top,Right,Bottom;
     }
 
     delegate IntPtr KeyboardCallback(int code,IntPtr wParam,IntPtr lParam);
@@ -71,6 +76,12 @@ internal static class PassiveAltTabTrace
     [DllImport("user32.dll")]
     static extern bool EnumWindows(EnumWindowCallback callback,IntPtr state);
     [DllImport("user32.dll")]
+    static extern bool GetWindowRect(IntPtr hwnd,out Rect rectangle);
+    [DllImport("user32.dll")]
+    static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")]
+    static extern IntPtr GetAncestor(IntPtr hwnd,uint flags);
+    [DllImport("user32.dll")]
     static extern short GetAsyncKeyState(int key);
 
     sealed class Signal {
@@ -90,10 +101,12 @@ internal static class PassiveAltTabTrace
     static readonly List<Signal> Pending=new List<Signal>();
     static readonly List<Sample> Samples=new List<Sample>();
     static readonly Stopwatch Clock=Stopwatch.StartNew();
+    static readonly long StartTick=Stopwatch.GetTimestamp();
     static readonly Dictionary<uint,string> ProcessNames=new Dictionary<uint,string>();
     static readonly JavaScriptSerializer Json=new JavaScriptSerializer { MaxJsonLength=1024*1024 };
     static long Seq;
-    static bool AltHeld, TabChordPending, StopRequested;
+    static bool AltHeld, TabHeld, TabChordPending;
+    static volatile bool StopRequested;
     static IntPtr LastForeground;
     static IntPtr KeyboardHook, WinEventHook;
     static KeyboardCallback OnKeyboard=KeyboardEvent;
@@ -103,8 +116,8 @@ internal static class PassiveAltTabTrace
     static System.Windows.Forms.Timer Pump;
 
     static long NowTicks() { return Stopwatch.GetTimestamp(); }
-    static long Milliseconds(long tick) {
-        return (long)((tick*1000.0)/Stopwatch.Frequency);
+    static long Milliseconds(long ticks) {
+        return (long)((ticks*1000.0)/Stopwatch.Frequency);
     }
     static void Record(string kind,IntPtr foreground) {
         lock(Gate) Pending.Add(new Signal {
@@ -135,13 +148,19 @@ internal static class PassiveAltTabTrace
                         }
                     }
                 }
-                else if(vk==VK_TAB && down &&
-                        (AltHeld || (data.flags & 0x20)!=0))
+                else if(vk==VK_TAB)
                 {
-                    // Only the presence/timing of Alt+Tab is logged.
-                    // Every other ordinary key is ignored.
-                    TabChordPending=true;
-                    Record("alt-tab",GetForegroundWindow());
+                    if(up) TabHeld=false;
+                    else if(!TabHeld) {
+                        TabHeld=true;
+                        if(AltHeld || (data.flags & 0x20)!=0)
+                        {
+                            // Only Alt+Tab timing is logged. Every other
+                            // ordinary key is ignored; suppress key repeats.
+                            TabChordPending=true;
+                            Record("alt-tab",GetForegroundWindow());
+                        }
+                    }
                 }
                 else if(vk==VK_F12 && down &&
                         (GetAsyncKeyState(VK_CONTROL)&0x8000)!=0 &&
@@ -197,6 +216,16 @@ internal static class PassiveAltTabTrace
         var tid=GetWindowThreadProcessId(hwnd,out pid);
         var owner=GetWindow(hwnd,GW_OWNER);
         var root=RootOwner(hwnd);
+        var hit=IntPtr.Zero;
+        Rect rect;
+        if(IsWindowVisible(hwnd) && !IsIconic(hwnd) &&
+           GetWindowRect(hwnd,out rect) &&
+           rect.Right>rect.Left && rect.Bottom>rect.Top) {
+            var center=new Point(rect.Left+(rect.Right-rect.Left)/2,
+                                 rect.Top+(rect.Bottom-rect.Top)/2);
+            var child=WindowFromPoint(center);
+            if(child!=IntPtr.Zero) hit=GetAncestor(child,2); // GA_ROOT
+        }
         var cls=new StringBuilder(256);
         GetClassName(hwnd,cls,cls.Capacity);
         return new {
@@ -206,6 +235,7 @@ internal static class PassiveAltTabTrace
             lastActivePopup=GetLastActivePopup(root).ToInt64(),
             visible=IsWindowVisible(hwnd),minimized=IsIconic(hwnd),
             exStyle=GetWindowLong(hwnd,-20),
+            topmostAtWindowCenter=hit.ToInt64(),
             hasWindowTabsGroupProperty=GetProp(hwnd,"WindowTabs.Group.v1")!=IntPtr.Zero
         };
     }
@@ -250,7 +280,7 @@ internal static class PassiveAltTabTrace
         var row=new Dictionary<string,object>();
         row["type"]=kind;
         row["utc"]=DateTime.UtcNow.ToString("o");
-        row["elapsedMs"]=Milliseconds(tick);
+        row["elapsedMs"]=Milliseconds(tick-StartTick);
         row["foreground"]=current;
         row["previousForeground"]=previous;
         if(source.HasValue) row["chordId"]=source.Value;
