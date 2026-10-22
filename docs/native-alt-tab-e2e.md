@@ -1,0 +1,66 @@
+# Controlled native Explorer Alt+Tab end-to-end test
+
+## Why it exists
+
+The existing `Run-DesktopE2E.ps1` workload verifies tab clicks, Alt+digit,
+WindowTabs next/previous shortcuts and grouping. It did **not** send
+Windows' native `Alt+Tab`. The user reports intermittent native Alt+Tab
+failures with taskbar combining enabled, including failures not identified by
+the event-only `activation-probe.enabled` recorder. Passing existing UI
+and activation callback tests does not establish native shell switcher
+correctness.
+
+The new **NativeAltTab** workload uses the actual Explorer switcher on an
+**unlocked, interactive Windows desktop**, with known application HWNDs,
+automated key input and an independently created external anchor process.
+It is a behavioral black-box test, not another passive focus recorder.
+
+## Invocation
+
+Close any existing WindowTabs instance, save other work, and allow the test
+to temporarily take over keyboard/foreground/mouse for its bounded sequence:
+
+```powershell
+pwsh -NoProfile -File ./tests/Run-DesktopE2E.ps1 -Interactive -NativeAltTab -AltTabSwitches 20
+```
+
+The workload never runs as part of ordinary CI. With `-BuildOnly`, it
+only compiles the standalone driver and the product Release executable:
+
+```powershell
+pwsh -NoProfile -File ./tests/Run-DesktopE2E.ps1 -BuildOnly -NativeAltTab
+```
+
+Two temporary WinForms application windows from the driver process are
+auto-grouped by WindowTabs with combined taskbar icons. A separate
+`DesktopAnchor.exe` process is not included by those path rules.
+The test verifies the grouped windows share a synthetic native root owner,
+then establishes the anchor as foreground after the group's tab was active.
+It sends **real Alt+Tab** via SendInput and expects the foreground to
+alternate between the group's most recent tab and the independent anchor.
+An unexpected foreground HWND ends the test and records the expected
+and observed HWND in `recentActions` and `failure.txt`.
+
+All application settings, windows, logs and generated executables live in a
+unique staged `tests/Debug/desktop-e2e-*` directory. The test restores its
+mouse cursor position and modifier state in cleanup, closes its anchor process
+and its helper forms, and terminates its staged WindowTabs instance.
+The script refuses to run interactive input unless `-Interactive` was
+supplied and the desktop is unlocked; its driver refuses unexpected
+foreground processes before sending Alt+Tab.
+
+## What passing means
+
+Passing verifies that the **specific synthetic group and external anchor**
+can alternate foreground under actual Windows native Alt+Tab for the bounded
+run; it is not proof that every application's group works or that an
+intermittent problem is fixed. A failing run includes an exact expected and
+actual HWND at the first divergence. The test does not infer the shell's
+highlighted tile; it avoids needing one by establishing a known two-entry
+switching sequence.
+
+Unlike production focus logging, this is an active interference test:
+running it while working on something else would disrupt normal desktop use.
+The test is deliberately an **explicit user action**, not scheduled or
+triggered by launching WindowTabs. It does not modify production Alt+Tab
+handling, ownership, the taskbar, or default diagnostic settings.
