@@ -193,6 +193,11 @@ module ActivationHandoffProbe =
                 // activation path. Work items are serialized by a single gate.
                 ThreadPool.QueueUserWorkItem(fun _ ->
                     lock gate (fun () ->
-                        try IO.File.AppendAllText(path,entry+Environment.NewLine)
+                        try
+                            // Event-only log, capped even across long-running sessions.
+                            if IO.File.Exists(path) && IO.FileInfo(path).Length>2L*1024L*1024L then
+                                IO.File.Copy(path,IO.Path.Combine(folder,"activation-probe.previous.jsonl"),true)
+                                IO.File.WriteAllText(path,String.Empty)
+                            IO.File.AppendAllText(path,entry+Environment.NewLine)
                         with _ -> ())) |> ignore
             with _ -> ()
