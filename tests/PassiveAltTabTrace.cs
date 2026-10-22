@@ -102,6 +102,7 @@ internal static class PassiveAltTabTrace
     static readonly List<Sample> Samples=new List<Sample>();
     static readonly Stopwatch Clock=Stopwatch.StartNew();
     static readonly long StartTick=Stopwatch.GetTimestamp();
+    static readonly DateTime StartUtc=DateTime.UtcNow;
     static readonly Dictionary<uint,string> ProcessNames=new Dictionary<uint,string>();
     static readonly JavaScriptSerializer Json=new JavaScriptSerializer { MaxJsonLength=1024*1024 };
     static long Seq;
@@ -279,7 +280,9 @@ internal static class PassiveAltTabTrace
     {
         var row=new Dictionary<string,object>();
         row["type"]=kind;
-        row["utc"]=DateTime.UtcNow.ToString("o");
+        // Reconstruct callback wall-clock time from its monotonic tick.
+        // Avoid presenting the later JSON-flush time as input-event time.
+        row["utc"]=StartUtc.AddMilliseconds(Milliseconds(tick-StartTick)).ToString("o");
         row["elapsedMs"]=Milliseconds(tick-StartTick);
         row["foreground"]=current;
         row["previousForeground"]=previous;
