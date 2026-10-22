@@ -24,6 +24,22 @@ to temporarily take over keyboard/foreground/mouse for its bounded sequence:
 pwsh -NoProfile -File ./tests/Run-DesktopE2E.ps1 -Interactive -NativeAltTab -AltTabSwitches 20
 ```
 
+The baseline above repeats one group member versus one independent anchor.
+The **separate opt-in, higher-coverage case** rotates the active group tab
+between each pair of native Alt+Tab switches:
+
+```powershell
+pwsh -NoProfile -File ./tests/Run-DesktopE2E.ps1 -Interactive -NativeAltTab -AltTabRotateMembers -AltTabSwitches 20
+```
+
+The rotating case checks the newly selected member each time, rather than
+100 switches to an unchanged app HWND. In both modes, the harness additionally
+checks that the **visible top-level window at the center of the expected app**
+matches the expected foreground HWND. This detects cases where an app reports
+foreground but a different window is visibly stacked over it. The live hit test
+only works when those fixture surfaces are unobstructed; external overlays can
+cause a clear test failure rather than an inferred WindowTabs fault.
+
 The workload never runs as part of ordinary CI. With `-BuildOnly`, it
 only compiles the standalone driver and the product Release executable:
 
@@ -38,8 +54,9 @@ The test verifies the grouped windows share a synthetic native root owner,
 then establishes the anchor as foreground after the group's tab was active.
 It sends **real Alt+Tab** via SendInput and expects the foreground to
 alternate between the group's most recent tab and the independent anchor.
-An unexpected foreground HWND ends the test and records the expected
-and observed HWND in `recentActions` and `failure.txt`.
+An unexpected foreground HWND (or a foreground HWND obscured at its
+blank window center) ends the test and records expected/observed HWNDs and
+hit-test data in `recentActions` and `failure.txt`.
 
 All application settings, windows, logs and generated executables live in a
 unique staged `tests/Debug/desktop-e2e-*` directory. The test restores its
