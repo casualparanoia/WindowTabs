@@ -1,7 +1,9 @@
 param([switch]$Interactive, [switch]$BuildOnly, [switch]$Describe, [switch]$VirtualDesktops,
       [switch]$NativeAltTab, [ValidateRange(2, 200)][int]$AltTabSwitches = 20,
       [switch]$AltTabRotateMembers, [switch]$AltTabExtraAnchor, [switch]$AltTabTwoGroups,
-      [switch]$AltTabBrowser, [switch]$AltTabBrowserLifecycle, [string]$BrowserExecutable,
+      [switch]$AltTabBrowser, [switch]$AltTabBrowserLifecycle,
+      [switch]$AltTabQuickMRU, [switch]$AltTabUngroupedControl,
+      [string]$BrowserExecutable,
       [string]$ReleaseExecutable,
       [ValidateSet('Quick','Full','Soak')][string]$Profile = 'Full',
       [int]$Seed = 0,
@@ -15,6 +17,15 @@ if ($AltTabRotateMembers -and -not $NativeAltTab) { throw 'AltTabRotateMembers r
 if ($AltTabTwoGroups -and -not $NativeAltTab) { throw 'AltTabTwoGroups requires NativeAltTab.' }
 if ($AltTabBrowser -and -not $NativeAltTab) { throw 'AltTabBrowser requires NativeAltTab.' }
 if ($AltTabBrowserLifecycle -and -not $AltTabBrowser) { throw 'AltTabBrowserLifecycle requires AltTabBrowser.' }
+if ($AltTabQuickMRU -and (-not $NativeAltTab -or -not $AltTabBrowser)) {
+    throw 'AltTabQuickMRU requires NativeAltTab and AltTabBrowser.'
+}
+if ($AltTabQuickMRU -and $AltTabBrowserLifecycle) {
+    throw 'AltTabQuickMRU and AltTabBrowserLifecycle are separate test workloads.'
+}
+if ($AltTabUngroupedControl -and -not $AltTabQuickMRU) {
+    throw 'AltTabUngroupedControl requires AltTabQuickMRU.'
+}
 if ($AltTabBrowserLifecycle -and $AltTabSwitches -lt 6) {
     throw 'Browser lifecycle requires at least 6 switches (two per membership phase).'
 }
@@ -49,7 +60,9 @@ if ($DurationMinutes -gt 0 -and $TimeoutSeconds -lt ($DurationMinutes * 60 + 60)
 }
 $randomize = $Profile -eq 'Soak'
 if ($randomize -and -not $PSBoundParameters.ContainsKey('Seed')) { $Seed = Get-Random -Minimum 1 -Maximum ([int]::MaxValue) }
-$configuration = if ($NativeAltTab -and $AltTabBrowser -and $AltTabBrowserLifecycle) {
+$configuration = if ($NativeAltTab -and $AltTabBrowser -and $AltTabQuickMRU) {
+    [pscustomobject]@{ Workload='NativeAltTabQuickMRU'; Switches=$AltTabSwitches; WindowTabsEnabled=(-not [bool]$AltTabUngroupedControl); ReprimeBetweenSwitches=$false; AltHoldMilliseconds=35; AfterVisualMilliseconds=35; IsolatedProfile=$true; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
+} elseif ($NativeAltTab -and $AltTabBrowser -and $AltTabBrowserLifecycle) {
     [pscustomobject]@{ Workload='NativeAltTabBrowserLifecycle'; Switches=$AltTabSwitches; MembershipPhases='2-3-2'; IsolatedProfile=$true; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
 } elseif ($NativeAltTab -and $AltTabBrowser) {
     [pscustomobject]@{ Workload='NativeAltTabBrowser'; Switches=$AltTabSwitches; IsolatedProfile=$true; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
@@ -151,7 +164,9 @@ if ($AltTabBrowser) {
     Write-Host "Isolated test browser: $([IO.Path]::GetFileName($browserPath)) (fresh temporary profile)"
 }
 if ($VirtualDesktops -or $NativeAltTab) { Copy-Item -LiteralPath $hostExe -Destination (Join-Path $stage 'DesktopAnchor.exe') }
-$driverArguments = if ($NativeAltTab -and $AltTabBrowser -and $AltTabBrowserLifecycle) {
+$driverArguments = if ($NativeAltTab -and $AltTabBrowser -and $AltTabQuickMRU) {
+    @('--native-alt-tab-browser-quick', "$AltTabSwitches", "$([bool]$AltTabUngroupedControl)")
+} elseif ($NativeAltTab -and $AltTabBrowser -and $AltTabBrowserLifecycle) {
     @('--native-alt-tab-browser-lifecycle', "$AltTabSwitches")
 } elseif ($NativeAltTab -and $AltTabBrowser) { @('--native-alt-tab-browser', "$AltTabSwitches") } elseif ($NativeAltTab -and $AltTabTwoGroups) { @('--native-alt-tab-two-groups', "$AltTabSwitches") } elseif ($NativeAltTab) { @('--native-alt-tab', "$AltTabSwitches", "$([bool]$AltTabRotateMembers)", "$([bool]$AltTabExtraAnchor)") } elseif ($VirtualDesktops) { @('--virtual-desktops') } else { @('--run', "$Switches", "$Cycles", "$DurationMinutes", "$Seed", "$randomize", "$RandomBatchesPerCycle") }
 $process = Start-Process -FilePath $hostExe -ArgumentList $driverArguments -WorkingDirectory $stage -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $stage 'stdout.log') -RedirectStandardError (Join-Path $stage 'stderr.log')
