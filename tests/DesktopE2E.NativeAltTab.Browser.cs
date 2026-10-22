@@ -277,8 +277,13 @@ static partial class DesktopE2E
                     addedWindow=expanded.Single(h=>!members.Contains(h));
                     // Auto-grouping must absorb the late-created browser
                     // HWND, keeping a single combined taskbar entry.
-                    await Until("WindowTabs did not add the third browser HWND into the combined group",
-                                ()=>BrowserGroupStrips(app.Id,expanded).Count==1,18000);
+                    await Until("WindowTabs did not attach all three browser HWNDs to one native group",
+                                ()=>{
+                                    if(BrowserGroupStrips(app.Id,expanded).Count!=1 ||
+                                       expanded.Any(h=>GetWindow(h,4)==IntPtr.Zero)) return false;
+                                    var sharedRoot=AltTabRootOwner(expanded[0]);
+                                    return expanded.All(h=>AltTabRootOwner(h)==sharedRoot);
+                                },18000);
                     strip=BrowserGroupStrips(app.Id,expanded).Single();
                     members=await ReadOrder(strip,3,expanded);
                     var expandedRoot=AltTabRootOwner(members[0]);
@@ -308,8 +313,13 @@ static partial class DesktopE2E
                     Check(members.Where(h=>h!=addedWindow).All(remaining.Contains) &&
                           remaining.Distinct().Count()==2,
                           "Closing the third browser HWND unexpectedly changed other members");
-                    await Until("WindowTabs did not restore two-member combined browser group",
-                                ()=>BrowserGroupStrips(app.Id,remaining).Count==1,18000);
+                    await Until("WindowTabs did not restore the two-member native group",
+                                ()=>{
+                                    if(BrowserGroupStrips(app.Id,remaining).Count!=1 ||
+                                       remaining.Any(h=>GetWindow(h,4)==IntPtr.Zero)) return false;
+                                    var sharedRoot=AltTabRootOwner(remaining[0]);
+                                    return remaining.All(h=>AltTabRootOwner(h)==sharedRoot);
+                                },18000);
                     strip=BrowserGroupStrips(app.Id,remaining).Single();
                     members=await ReadOrder(strip,2,remaining);
                     var remainingRoot=AltTabRootOwner(members[0]);
