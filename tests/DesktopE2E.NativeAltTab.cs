@@ -104,10 +104,11 @@ static partial class DesktopE2E
         Inject(KeyInput(0x12,true));
     }
 
-    static async Task RunNativeAltTab(int switches, bool rotateMembers)
+    static async Task RunNativeAltTab(int switches, bool rotateMembers, bool extraAnchor)
     {
         phase="native Alt+Tab preflight";
         Check(switches>=2 && switches%2==0,"Native Alt+Tab count must be a positive even number");
+        Check(!extraAnchor || rotateMembers,"Extra native Alt+Tab anchor requires rotating members");
         await Until("Release mouse and modifier keys before native Alt+Tab test",
                     ()=>new[]{1,2,0x10,0x11,0x12}.All(k=>GetAsyncKeyState(k)>=0),10000);
         Preflight();
@@ -150,9 +151,15 @@ static partial class DesktopE2E
             // the two application HWNDs. It is our known external MRU target.
             phase="native Alt+Tab anchor";
             var anchor=await StartAnchor(verifyDesktop:false);
+            // Extra distinct process/HWND increases eligible shell entries
+            // without requiring the tester to open or arrange personal apps.
+            // Its second location is away from the first anchor and group.
+            var alternateAnchor=extraAnchor ?
+                await StartAnchor(verifyDesktop:false,placement:1) : null;
             // A real click establishes independent MRU and foreground; do
             // not use background SetForegroundWindow or virtual-desktop COM.
             await ClickNativeAltTabAnchor(anchor);
+            var pairAnchor=anchor;
             var lastGroupMember=order.Last();
             // Alternate between anchor and the one combined group. This is
             // a falsifiable 2-entity MRU test; no guesses about Explorer's
@@ -171,9 +178,13 @@ static partial class DesktopE2E
                     Remember("rotate-group-member",new {index,member=lastGroupMember.ToInt64()});
                     await Click(strip,index,order.Count);
                     await Activated(lastGroupMember,strip);
-                    await ClickNativeAltTabAnchor(anchor);
+                    // Reestablish *two known most-recent eligible entries*
+                    // before each pair, despite a third external HWND being
+                    // in Explorer's native Alt+Tab history.
+                    pairAnchor=extraAnchor && (i/2)%2==1 ? alternateAnchor : anchor;
+                    await ClickNativeAltTabAnchor(pairAnchor);
                 }
-                var expected=(i%2==0)?lastGroupMember:anchor.Window;
+                var expected=(i%2==0)?lastGroupMember:pairAnchor.Window;
                 var before=GetForegroundWindow();
                 Remember("native-alt-tab-before",new {index=i,from=before.ToInt64(),
                     expected=expected.ToInt64(),groupRoot=AltTabRootOwner(lastGroupMember).ToInt64()});
@@ -206,7 +217,8 @@ static partial class DesktopE2E
                         before=DescribeNativeAltTabWindow(before),
                         expected=DescribeNativeAltTabWindow(expected),
                         observed=DescribeNativeAltTabWindow(observed),
-                        anchor=DescribeNativeAltTabWindow(anchor.Window),
+                        anchor=DescribeNativeAltTabWindow(pairAnchor.Window),
+                        alternateAnchor=DescribeNativeAltTabWindow(extraAnchor?alternateAnchor.Window:IntPtr.Zero),
                         memberA=DescribeNativeAltTabWindow(order[0]),
                         memberB=DescribeNativeAltTabWindow(order[1]),
                         sharedGroupRoot=AltTabRootOwner(order[0]).ToInt64(),
@@ -237,7 +249,7 @@ static partial class DesktopE2E
                 await Task.Delay(120); // avoid overlapping a still-closing switcher
             }
             completed=1;
-            Log("PASS: "+totalSwitches+" native Explorer Alt+Tab toggles between one combined group and independent anchor (rotateMembers="+rotateMembers+"); foreground and hit-test agreed.");
+            Log("PASS: "+totalSwitches+" native Explorer Alt+Tab toggles between one combined group and external anchor (rotateMembers="+rotateMembers+", extraAnchor="+extraAnchor+"); foreground and hit-test agreed.");
         }
         finally
         {
