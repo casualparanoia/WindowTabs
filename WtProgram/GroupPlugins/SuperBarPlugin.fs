@@ -711,8 +711,11 @@ type TaskbarPlacementAttempts(?now:unit -> int64) =
     member _.RetryDelay = if attempts>0 && attempts<3 then Some(max 1 (int(nextAt-clock()))) else None
     member _.Count = attempts
 
-type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid option, ?placeDesktop:IntPtr * Guid -> bool) as this =
+type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid option, ?placeDesktop:IntPtr * Guid -> bool, ?preserveApplicationOwners:bool) as this =
     let _os = OS()
+    // In this opt-in experiment, use registered synthetic thumbnails but never
+    // change the GW_OWNER of an application's real HWND.
+    let preserveOwners = defaultArg preserveApplicationOwners false
 
     let _taskbar = _os.getTaskbar().Value
     let taskbarVisibility = TaskbarVisibility(fun (hwnd,visible) ->
@@ -753,7 +756,9 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
     let mutable disposed = false
     let mutable exitCleanedUp = false
 
-    new() = SuperBarPlugin(fun hwnd -> Services.get<WindowGroup>().canShareInput hwnd)
+    new() = SuperBarPlugin(
+        (fun hwnd -> Services.get<WindowGroup>().canShareInput hwnd),
+        preserveApplicationOwners=IO.File.Exists(IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"taskbar-ownerless.enabled")))
 
     member this.os = _os
     
@@ -793,6 +798,8 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
 
     member _.taskbarVisibilityChanges = taskbarVisibility.changeCount
     member _.isAwaitingDesktopPlacement = placementRetry.Enabled
+    member _.preservesApplicationOwners = preserveOwners
+    member _.isOwnerlessCombinedReady = preserveOwners && taskbarButton<>null && adopted.Count>=2
 
     /// A window without a taskbar button is on no virtual desktop and shows on all of them;
     /// a window the taskbar window owns follows that window's desktop instead.
