@@ -1,7 +1,7 @@
 param([switch]$Interactive, [switch]$BuildOnly, [switch]$Describe, [switch]$VirtualDesktops,
       [switch]$NativeAltTab, [ValidateRange(2, 200)][int]$AltTabSwitches = 20,
       [switch]$AltTabRotateMembers, [switch]$AltTabExtraAnchor, [switch]$AltTabTwoGroups,
-      [switch]$AltTabBrowser, [string]$BrowserExecutable,
+      [switch]$AltTabBrowser, [switch]$AltTabBrowserLifecycle, [string]$BrowserExecutable,
       [string]$ReleaseExecutable,
       [ValidateSet('Quick','Full','Soak')][string]$Profile = 'Full',
       [int]$Seed = 0,
@@ -14,6 +14,10 @@ $ErrorActionPreference = 'Stop'
 if ($AltTabRotateMembers -and -not $NativeAltTab) { throw 'AltTabRotateMembers requires NativeAltTab.' }
 if ($AltTabTwoGroups -and -not $NativeAltTab) { throw 'AltTabTwoGroups requires NativeAltTab.' }
 if ($AltTabBrowser -and -not $NativeAltTab) { throw 'AltTabBrowser requires NativeAltTab.' }
+if ($AltTabBrowserLifecycle -and -not $AltTabBrowser) { throw 'AltTabBrowserLifecycle requires AltTabBrowser.' }
+if ($AltTabBrowserLifecycle -and $AltTabSwitches -lt 6) {
+    throw 'Browser lifecycle requires at least 6 switches (two per membership phase).'
+}
 if ($BrowserExecutable -and -not $AltTabBrowser) { throw 'BrowserExecutable requires AltTabBrowser.' }
 if ($AltTabBrowser -and ($AltTabTwoGroups -or $AltTabRotateMembers -or $AltTabExtraAnchor)) {
     throw 'AltTabBrowser is an independent workload; omit the WinForms AltTab variant switches.'
@@ -45,7 +49,9 @@ if ($DurationMinutes -gt 0 -and $TimeoutSeconds -lt ($DurationMinutes * 60 + 60)
 }
 $randomize = $Profile -eq 'Soak'
 if ($randomize -and -not $PSBoundParameters.ContainsKey('Seed')) { $Seed = Get-Random -Minimum 1 -Maximum ([int]::MaxValue) }
-$configuration = if ($NativeAltTab -and $AltTabBrowser) {
+$configuration = if ($NativeAltTab -and $AltTabBrowser -and $AltTabBrowserLifecycle) {
+    [pscustomobject]@{ Workload='NativeAltTabBrowserLifecycle'; Switches=$AltTabSwitches; MembershipPhases='2-3-2'; IsolatedProfile=$true; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
+} elseif ($NativeAltTab -and $AltTabBrowser) {
     [pscustomobject]@{ Workload='NativeAltTabBrowser'; Switches=$AltTabSwitches; IsolatedProfile=$true; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
 } elseif ($NativeAltTab -and $AltTabTwoGroups) {
     [pscustomobject]@{ Workload='NativeAltTabTwoGroups'; Switches=$AltTabSwitches; GroupCount=2; MembersPerGroup=2; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
@@ -145,7 +151,9 @@ if ($AltTabBrowser) {
     Write-Host "Isolated test browser: $([IO.Path]::GetFileName($browserPath)) (fresh temporary profile)"
 }
 if ($VirtualDesktops -or $NativeAltTab) { Copy-Item -LiteralPath $hostExe -Destination (Join-Path $stage 'DesktopAnchor.exe') }
-$driverArguments = if ($NativeAltTab -and $AltTabBrowser) { @('--native-alt-tab-browser', "$AltTabSwitches") } elseif ($NativeAltTab -and $AltTabTwoGroups) { @('--native-alt-tab-two-groups', "$AltTabSwitches") } elseif ($NativeAltTab) { @('--native-alt-tab', "$AltTabSwitches", "$([bool]$AltTabRotateMembers)", "$([bool]$AltTabExtraAnchor)") } elseif ($VirtualDesktops) { @('--virtual-desktops') } else { @('--run', "$Switches", "$Cycles", "$DurationMinutes", "$Seed", "$randomize", "$RandomBatchesPerCycle") }
+$driverArguments = if ($NativeAltTab -and $AltTabBrowser -and $AltTabBrowserLifecycle) {
+    @('--native-alt-tab-browser-lifecycle', "$AltTabSwitches")
+} elseif ($NativeAltTab -and $AltTabBrowser) { @('--native-alt-tab-browser', "$AltTabSwitches") } elseif ($NativeAltTab -and $AltTabTwoGroups) { @('--native-alt-tab-two-groups', "$AltTabSwitches") } elseif ($NativeAltTab) { @('--native-alt-tab', "$AltTabSwitches", "$([bool]$AltTabRotateMembers)", "$([bool]$AltTabExtraAnchor)") } elseif ($VirtualDesktops) { @('--virtual-desktops') } else { @('--run', "$Switches", "$Cycles", "$DurationMinutes", "$Seed", "$randomize", "$RandomBatchesPerCycle") }
 $process = Start-Process -FilePath $hostExe -ArgumentList $driverArguments -WorkingDirectory $stage -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $stage 'stdout.log') -RedirectStandardError (Join-Path $stage 'stderr.log')
 $handle = $process.Handle
 $shown = @{ 'stdout.log'=0; 'stderr.log'=0 }
