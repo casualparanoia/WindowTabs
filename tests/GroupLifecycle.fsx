@@ -848,6 +848,8 @@ let main() =
                     activate preview 0
                     check (hostActivations=1 && previewActivations=1)
                           "A proxy deactivation incorrectly dispatched another activation"
+                    previewActivations <- 0
+                    hostActivations <- 0
                     // The taskbar window owns the previews, so their windows keep to its virtual desktop.
                     let previewOwner key = WinUserApi.GetWindow((button.tryTabWindow key).Value.hwnd,GetWindowConstants.GW_OWNER)
                     check (["a";"b"] |> List.forall(fun key -> previewOwner key=button.window.hwnd))
