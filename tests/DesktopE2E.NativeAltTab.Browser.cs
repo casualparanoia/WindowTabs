@@ -122,8 +122,7 @@ static partial class DesktopE2E
                 expected=DescribeNativeAltTabWindow(expected),
                 observed=DescribeNativeAltTabWindow(observed),
                 anchor=DescribeNativeAltTabWindow(anchor),
-                browserMemberA=DescribeNativeAltTabWindow(members[0]),
-                browserMemberB=DescribeNativeAltTabWindow(members[1]),
+                browserMembers=members.Select(DescribeNativeAltTabWindow).ToArray(),
                 strip=DescribeNativeAltTabWindow(strip),
                 foregroundTransitions=transitions.ToArray()
             };
@@ -151,10 +150,13 @@ static partial class DesktopE2E
         await Task.Delay(120);
     }
 
-    static async Task RunNativeAltTabBrowser(int switches)
+    static async Task RunNativeAltTabBrowser(int switches, bool lifecycle=false)
     {
-        phase="isolated browser native Alt+Tab preflight";
+        phase=lifecycle ? "browser membership lifecycle preflight" :
+                          "isolated browser native Alt+Tab preflight";
         Check(switches>=2 && switches%2==0,"Browser Alt+Tab count must be even and at least 2");
+        Check(!lifecycle || switches>=6,
+              "Browser lifecycle test requires at least 6 switches (2 per membership phase)");
         await Until("Release input before isolated browser test",
                     ()=>new[]{1,2,0x10,0x11,0x12}.All(k=>GetAsyncKeyState(k)>=0),10000);
         Preflight();
@@ -241,21 +243,118 @@ static partial class DesktopE2E
             phase="isolated browser Alt+Tab anchor";
             var anchor=await StartAnchor(verifyDesktop:false);
             await ClickNativeAltTabAnchor(anchor);
-            phase="native Alt+Tab isolated Chromium group";
+            phase=lifecycle ? "native Alt+Tab browser membership lifecycle" :
+                              "native Alt+Tab isolated Chromium group";
+            // Explicit, bounded three-phase workload: 2 -> 3 -> 2 browser
+            // windows. Each phase gets at least one complete Alt+Tab pair.
+            // The baseline mode remains unchanged.
+            var beforeCount=lifecycle ? Math.Max(2,2*(switches/6)) : switches;
+            var expandedCount=lifecycle ? Math.Max(2,2*(switches/6)) : 0;
+            var afterCount=lifecycle ? switches-beforeCount-expandedCount : 0;
+            Check(!lifecycle || (afterCount>=2 && afterCount%2==0),
+                  "Invalid browser membership phase allocation");
+            IntPtr addedWindow=IntPtr.Zero;
             for(int i=0;i<switches;i+=2)
             {
                 step="prepare browser pair "+(i/2+1);
                 CheckNoUnrelatedBrowserWindows(browserPid,browserName);
-                var member=members[(i/2)%2];
-                Remember("browser-rotate-member",new {pair=i/2,member=member.ToInt64()});
-                await Click(strip,(i/2)%2,2);
+                if(lifecycle && i==beforeCount)
+                {
+                    phase="browser lifecycle: add third window to live group";
+                    Check(browserWindows.Count==2 &&
+                          BrowserTopWindows(browserPid).Count==2,
+                          "Unexpected browser HWND count before adding the third window");
+                    // Use the same staged profile, executable and browser PID.
+                    // The second/third launcher request may forward to the
+                    // already-running *isolated* browser instance.
+                    StartStagedBrowser(executable,profile,false);
+                    await Until("Third isolated Chromium top-level window did not appear",
+                                ()=>!browser.HasExited &&
+                                    BrowserTopWindows(browserPid).Count==3,20000);
+                    var expanded=BrowserTopWindows(browserPid);
+                    Check(members.All(expanded.Contains) && expanded.Distinct().Count()==3,
+                          "Existing isolated browser HWND changed while adding third window");
+                    addedWindow=expanded.Single(h=>!members.Contains(h));
+                    // Auto-grouping must absorb the late-created browser
+                    // HWND, keeping a single combined taskbar entry.
+                    await Until("WindowTabs did not attach all three browser HWNDs to one native group",
+                                ()=>{
+                                    if(BrowserGroupStrips(app.Id,expanded).Count!=1 ||
+                                       expanded.Any(h=>GetWindow(h,4)==IntPtr.Zero)) return false;
+                                    var sharedRoot=AltTabRootOwner(expanded[0]);
+                                    return expanded.All(h=>AltTabRootOwner(h)==sharedRoot);
+                                },18000);
+                    strip=BrowserGroupStrips(app.Id,expanded).Single();
+                    members=await ReadOrder(strip,3,expanded);
+                    var expandedRoot=AltTabRootOwner(members[0]);
+                    Check(members.All(h=>GetWindow(h,4)!=IntPtr.Zero &&
+                                         AltTabRootOwner(h)==expandedRoot),
+                          "Expanded 3-window browser group has inconsistent owner roots");
+                    Remember("browser-group-expanded",new {
+                        added=addedWindow.ToInt64(),members=members.Select(h=>h.ToInt64()).ToArray(),
+                        root=expandedRoot.ToInt64(),strip=strip.ToInt64()
+                    });
+                    phase="browser lifecycle: expanded group native Alt+Tab";
+                }
+                if(lifecycle && i==beforeCount+expandedCount)
+                {
+                    phase="browser lifecycle: close third window";
+                    Check(addedWindow!=IntPtr.Zero && members.Contains(addedWindow),
+                          "Third browser member was not established before closure");
+                    // Close ONLY the just-created staged browser HWND.
+                    // Failure to close is a membership/setup failure, not
+                    // an Alt+Tab wrong-target result.
+                    Check(PostMessage(addedWindow,0x10,IntPtr.Zero,IntPtr.Zero),
+                          "WM_CLOSE failed for staged third Chromium window");
+                    await Until("Third Chromium window did not close",
+                                ()=>!IsWindow(addedWindow) &&
+                                    BrowserTopWindows(browserPid).Count==2,15000);
+                    var remaining=BrowserTopWindows(browserPid);
+                    Check(members.Where(h=>h!=addedWindow).All(remaining.Contains) &&
+                          remaining.Distinct().Count()==2,
+                          "Closing the third browser HWND unexpectedly changed other members");
+                    await Until("WindowTabs did not restore the two-member native group",
+                                ()=>{
+                                    if(BrowserGroupStrips(app.Id,remaining).Count!=1 ||
+                                       remaining.Any(h=>GetWindow(h,4)==IntPtr.Zero)) return false;
+                                    var sharedRoot=AltTabRootOwner(remaining[0]);
+                                    return remaining.All(h=>AltTabRootOwner(h)==sharedRoot);
+                                },18000);
+                    strip=BrowserGroupStrips(app.Id,remaining).Single();
+                    members=await ReadOrder(strip,2,remaining);
+                    var remainingRoot=AltTabRootOwner(members[0]);
+                    Check(members.All(h=>GetWindow(h,4)!=IntPtr.Zero &&
+                                         AltTabRootOwner(h)==remainingRoot),
+                          "Two-member browser group has inconsistent owner roots after close");
+                    Check(!IsWindow(addedWindow),
+                          "Closed browser window reappeared after group contraction");
+                    Remember("browser-group-contracted",new {
+                        removed=addedWindow.ToInt64(),
+                        members=members.Select(h=>h.ToInt64()).ToArray(),
+                        root=remainingRoot.ToInt64(),strip=strip.ToInt64()
+                    });
+                    phase="browser lifecycle: restored group native Alt+Tab";
+                }
+                CheckNoUnrelatedBrowserWindows(browserPid,browserName);
+                Check(BrowserTopWindows(browserPid).Count==members.Count,
+                      "Browser fixture window count diverged from expected group membership");
+                var slot=(i/2)%members.Count;
+                var member=members[slot];
+                Remember("browser-rotate-member",new {
+                    pair=i/2,member=member.ToInt64(),memberCount=members.Count,
+                    lifecycle
+                });
+                await Click(strip,slot,members.Count);
                 await Activated(member,strip);
                 await ClickNativeAltTabAnchor(anchor);
                 await BrowserNativeSwitch(i,member,strip,members,anchor.Window,browserPid);
                 await BrowserNativeSwitch(i+1,anchor.Window,strip,members,anchor.Window,browserPid);
             }
             completed=1;
-            Log("PASS: "+totalSwitches+" native Alt+Tab switches between isolated Chromium browser group and independent anchor; browser member, owner and visual hit-test verified.");
+            if(lifecycle)
+                Log("PASS: "+totalSwitches+" genuine browser native Alt+Tab switches across 2 -> 3 -> 2 group membership; foreground/owner/visual hit-test agreed.");
+            else
+                Log("PASS: "+totalSwitches+" native Alt+Tab switches between isolated Chromium browser group and independent anchor; browser member, owner and visual hit-test verified.");
         }
         finally
         {
