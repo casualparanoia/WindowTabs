@@ -56,7 +56,19 @@ It sends **real Alt+Tab** via SendInput and expects the foreground to
 alternate between the group's most recent tab and the independent anchor.
 An unexpected foreground HWND (or a foreground HWND obscured at its
 blank window center) ends the test and records expected/observed HWNDs and
-hit-test data in `recentActions` and `failure.txt`.
+hit-test data in `recentActions` and `failure.txt`. For an **unexpected
+foreground HWND**, the driver additionally writes
+`foreground-mismatch.json` *before teardown* containing: the actual,
+expected, anchor and grouped member HWNDs; each window's PID, process
+name, native class, owner chain root, visibility and last-active-popup
+metadata; and a bounded sequence of foreground changes observed during
+the 1.6-second wait. No window titles, command lines or paths are logged.
+
+This extra record is important because the ordinary `windows.json` fixture
+snapshot enumerates only the staged WindowTabs and test helper windows;
+a third-party HWND, such as a shell or launcher window, does not appear
+there. A failure with a foreign process foreground is not automatically a
+WindowTabs bug; correlate its identity and the switching sequence first.
 
 All application settings, windows, logs and generated executables live in a
 unique staged `tests/Debug/desktop-e2e-*` directory. The test restores its
