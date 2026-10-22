@@ -50,7 +50,7 @@ static partial class DesktopE2E
         };
     }
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", EntryPoint="IsIconic")]
     static extern bool IsIconicForAltTab(IntPtr window);
 
     // GA_ROOT=2. WindowFromPoint can return a child control instead of the
