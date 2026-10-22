@@ -545,8 +545,11 @@ static partial class DesktopE2E
         bool nativeAltTabBrowser=args.Length==2 && args[0]=="--native-alt-tab-browser";
         bool nativeAltTabBrowserLifecycle=args.Length==2 &&
                                           args[0]=="--native-alt-tab-browser-lifecycle";
+        bool nativeAltTabBrowserQuick=args.Length==3 &&
+                args[0]=="--native-alt-tab-browser-quick";
         if(!virtualDesktops && !nativeAltTab && !nativeAltTabTwoGroups &&
-           !nativeAltTabBrowser && !nativeAltTabBrowserLifecycle && ((args.Length!=3 && args.Length!=4 && args.Length!=7) || args[0]!="--run")) { Console.Error.WriteLine("Use Run-DesktopE2E.ps1 -Interactive"); return 2; }
+           !nativeAltTabBrowser && !nativeAltTabBrowserLifecycle &&
+           !nativeAltTabBrowserQuick && ((args.Length!=3 && args.Length!=4 && args.Length!=7) || args[0]!="--run")) { Console.Error.WriteLine("Use Run-DesktopE2E.ps1 -Interactive"); return 2; }
         if(args.Length==7) { seed=int.Parse(args[4]); randomize=bool.Parse(args[5]); randomBatchesPerCycle=int.Parse(args[6]); }
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
         Application.EnableVisualStyles();
@@ -557,6 +560,9 @@ static partial class DesktopE2E
             start.Tick+=async (s,e)=> {
                 start.Stop();
                 try { if(virtualDesktops) await RunVirtualDesktops();
+                      else if(nativeAltTabBrowserQuick)
+                          await RunNativeAltTabBrowser(int.Parse(args[1]),false,true,
+                                                        bool.Parse(args[2]));
                       else if(nativeAltTabBrowserLifecycle)
                           await RunNativeAltTabBrowser(int.Parse(args[1]),true);
                       else if(nativeAltTabBrowser)
