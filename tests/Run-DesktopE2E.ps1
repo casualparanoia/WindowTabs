@@ -61,8 +61,19 @@ if ($ReleaseExecutable) {
 Copy-Item -LiteralPath $taskE2EExecutable -Destination $stage
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe'
 $hostExe = Join-Path $stage 'DesktopE2E.exe'
-Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes,WindowsBase
-$taskbarAutomationReferences = @([System.Windows.Automation.AutomationElement].Assembly.Location,[System.Windows.Automation.ControlType].Assembly.Location,[System.Windows.DependencyObject].Assembly.Location) | Select-Object -Unique | ForEach-Object { "/r:$_" }
+# The driver is compiled by the .NET Framework 4.x csc.exe, even when the
+# caller is PowerShell 7 (.NET 10). Never take UIAutomation assemblies from
+# the running PowerShell process: pwsh resolves different System.Runtime
+# types, which cannot be referenced by the Framework compiler (CS0012).
+# Target the same net48 reference pack used to build WindowTabs.
+$frameworkReferenceRoot = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Reference Assemblies/Microsoft/Framework/.NETFramework/v4.8'
+$taskbarAutomationReferences = @('UIAutomationClient.dll', 'UIAutomationTypes.dll', 'WindowsBase.dll') | ForEach-Object {
+    $referencePath = Join-Path $frameworkReferenceRoot $_
+    if (-not (Test-Path -LiteralPath $referencePath -PathType Leaf)) {
+        throw "Missing .NET Framework 4.8 reference assembly: $referencePath. Install the .NET Framework 4.8 Developer Pack."
+    }
+    "/r:$referencePath"
+}
 & $compiler /nologo /target:exe /platform:x86 "/out:$hostExe" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:Accessibility.dll @taskbarAutomationReferences "/win32manifest:$repo/WtProgram/app.manifest" (Join-Path $PSScriptRoot 'DesktopE2E.cs') (Join-Path $PSScriptRoot 'DesktopE2E.VirtualDesktops.cs') (Join-Path $PSScriptRoot 'DesktopE2E.NativeAltTab.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Desktop E2E compilation failed.' }
 & $hostExe --check-random-plan
