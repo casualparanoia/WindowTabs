@@ -37,6 +37,13 @@ jobs:
         shell: powershell
         run: ./tests/Run-DesktopE2E.ps1 -BuildOnly -ReleaseExecutable ./WtProgram/bin/Release/WindowTabs.exe
 
+      # The .NET Framework driver must use net48 reference assemblies even
+      # when invoked by PowerShell 7, whose loaded UIAutomation DLLs target
+      # a newer runtime. Check both shells to prevent local-only CS0012.
+      - name: Compile desktop E2E harness under PowerShell 7
+        shell: pwsh
+        run: ./tests/Run-DesktopE2E.ps1 -BuildOnly -ReleaseExecutable ./WtProgram/bin/Release/WindowTabs.exe
+
       - name: Upload Release diagnostics
         if: always()
         uses: actions/upload-artifact@v6
