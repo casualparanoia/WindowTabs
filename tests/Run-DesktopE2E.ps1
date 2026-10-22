@@ -65,14 +65,28 @@ $hostExe = Join-Path $stage 'DesktopE2E.exe'
 # caller is PowerShell 7 (.NET 10). Never take UIAutomation assemblies from
 # the running PowerShell process: pwsh resolves different System.Runtime
 # types, which cannot be referenced by the Framework compiler (CS0012).
-# Target the same net48 reference pack used to build WindowTabs.
-$frameworkReferenceRoot = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Reference Assemblies/Microsoft/Framework/.NETFramework/v4.8'
-$taskbarAutomationReferences = @('UIAutomationClient.dll', 'UIAutomationTypes.dll', 'WindowsBase.dll') | ForEach-Object {
-    $referencePath = Join-Path $frameworkReferenceRoot $_
-    if (-not (Test-Path -LiteralPath $referencePath -PathType Leaf)) {
-        throw "Missing .NET Framework 4.8 reference assembly: $referencePath. Install the .NET Framework 4.8 Developer Pack."
+# .NET Framework 4.8 *or* 4.8.1 Developer Packs are valid here.
+# Some Windows 11 installations have only v4.8.1. Do not require users
+# to create system-directory junctions or install an older targeting pack.
+$frameworkReferenceBase = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Reference Assemblies/Microsoft/Framework/.NETFramework'
+$requiredReferences = @('UIAutomationClient.dll', 'UIAutomationTypes.dll', 'WindowsBase.dll')
+$frameworkReferenceRoot = $null
+foreach ($version in @('v4.8', 'v4.8.1')) {
+    $candidate = Join-Path $frameworkReferenceBase $version
+    $allPresent = @($requiredReferences | Where-Object {
+        -not (Test-Path -LiteralPath (Join-Path $candidate $_) -PathType Leaf)
+    }).Count -eq 0
+    if ($allPresent) {
+        $frameworkReferenceRoot = $candidate
+        break
     }
-    "/r:$referencePath"
+}
+if (-not $frameworkReferenceRoot) {
+    throw "Missing .NET Framework UIAutomation reference assemblies under $frameworkReferenceBase (checked v4.8 and v4.8.1). Install the .NET Framework 4.8 or 4.8.1 Developer Pack."
+}
+Write-Host "Desktop E2E reference assemblies: $frameworkReferenceRoot"
+$taskbarAutomationReferences = $requiredReferences | ForEach-Object {
+    "/r:$(Join-Path $frameworkReferenceRoot $_)"
 }
 & $compiler /nologo /target:exe /platform:x86 "/out:$hostExe" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:Accessibility.dll @taskbarAutomationReferences "/win32manifest:$repo/WtProgram/app.manifest" (Join-Path $PSScriptRoot 'DesktopE2E.cs') (Join-Path $PSScriptRoot 'DesktopE2E.VirtualDesktops.cs') (Join-Path $PSScriptRoot 'DesktopE2E.NativeAltTab.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Desktop E2E compilation failed.' }
