@@ -87,7 +87,7 @@ static partial class DesktopE2E
             Application.Run(anchor);
         }
     }
-    static async Task<DesktopAnchor> StartAnchor()
+    static async Task<DesktopAnchor> StartAnchor(bool verifyDesktop=true)
     {
         var anchor=new DesktopAnchor();
         anchor.Process=Process.Start(new ProcessStartInfo(Path.Combine(Root,"DesktopAnchor.exe"),"--desktop-anchor") {
@@ -98,9 +98,16 @@ static partial class DesktopE2E
             anchor.Window=Windows(anchor.Process.Id).FirstOrDefault(IsWindowVisible);
             return anchor.Window!=IntPtr.Zero;
         });
-        await Until("Desktop anchor is not on the active desktop",()=>OnCurrent(anchor.Window) && !Cloaked(anchor.Window));
-        await Until("Explorer did not register the anchor's desktop",()=>TryNativeDesktop(anchor.Window,out anchor.Id),10000);
-        anchor.Id=NativeDesktop(anchor.Window);
+        if(verifyDesktop)
+        {
+            // Only the virtual-desktop workload initializes the shell COM
+            // manager. Native Alt+Tab needs an independent visible process,
+            // not a COM desktop-membership check.
+            Check(shell!=null,"Virtual-desktop COM manager was not initialized");
+            await Until("Desktop anchor is not on the active desktop",()=>OnCurrent(anchor.Window) && !Cloaked(anchor.Window));
+            await Until("Explorer did not register the anchor's desktop",()=>TryNativeDesktop(anchor.Window,out anchor.Id),10000);
+            anchor.Id=NativeDesktop(anchor.Window);
+        }
         return anchor;
     }
     static void DesktopChord(int key)
