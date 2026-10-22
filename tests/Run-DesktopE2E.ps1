@@ -1,5 +1,6 @@
 param([switch]$Interactive, [switch]$BuildOnly, [switch]$Describe, [switch]$VirtualDesktops,
       [switch]$NativeAltTab, [ValidateRange(2, 200)][int]$AltTabSwitches = 20,
+      [switch]$AltTabRotateMembers,
       [string]$ReleaseExecutable,
       [ValidateSet('Quick','Full','Soak')][string]$Profile = 'Full',
       [int]$Seed = 0,
@@ -9,6 +10,7 @@ param([switch]$Interactive, [switch]$BuildOnly, [switch]$Describe, [switch]$Virt
       [ValidateRange(0, 60)][int]$DurationMinutes = 0,
       [ValidateRange(60, 7200)][int]$TimeoutSeconds = 600)
 $ErrorActionPreference = 'Stop'
+if ($AltTabRotateMembers -and -not $NativeAltTab) { throw 'AltTabRotateMembers requires NativeAltTab.' }
 if ($NativeAltTab -and $VirtualDesktops) { throw 'NativeAltTab and VirtualDesktops are independent workloads.' }
 if ($NativeAltTab -and $AltTabSwitches % 2) { throw 'AltTabSwitches must be an even number.' }
 if ($NativeAltTab -and (@('Profile','Switches','Cycles','DurationMinutes','Seed','RandomBatchesPerCycle') | Where-Object { $PSBoundParameters.ContainsKey($_) })) { throw 'Use only AltTabSwitches and TimeoutSeconds for the native Alt+Tab workload.' }
@@ -35,7 +37,7 @@ if ($DurationMinutes -gt 0 -and $TimeoutSeconds -lt ($DurationMinutes * 60 + 60)
 $randomize = $Profile -eq 'Soak'
 if ($randomize -and -not $PSBoundParameters.ContainsKey('Seed')) { $Seed = Get-Random -Minimum 1 -Maximum ([int]::MaxValue) }
 $configuration = if ($NativeAltTab) {
-    [pscustomobject]@{ Workload='NativeAltTab'; Switches=$AltTabSwitches; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
+    [pscustomobject]@{ Workload='NativeAltTab'; Switches=$AltTabSwitches; RotateMembers=[bool]$AltTabRotateMembers; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
 } elseif ($VirtualDesktops) {
     [pscustomobject]@{ Workload='VirtualDesktops'; Scenarios=4; TemporaryDesktops=2; TimeoutSeconds=$TimeoutSeconds }
 } else {
@@ -96,7 +98,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Random action planner checks failed.' }
 Write-Host "Desktop E2E artifacts: $stage"
 if ($BuildOnly) { return }
 if ($VirtualDesktops -or $NativeAltTab) { Copy-Item -LiteralPath $hostExe -Destination (Join-Path $stage 'DesktopAnchor.exe') }
-$driverArguments = if ($NativeAltTab) { @('--native-alt-tab', "$AltTabSwitches") } elseif ($VirtualDesktops) { @('--virtual-desktops') } else { @('--run', "$Switches", "$Cycles", "$DurationMinutes", "$Seed", "$randomize", "$RandomBatchesPerCycle") }
+$driverArguments = if ($NativeAltTab) { @('--native-alt-tab', "$AltTabSwitches", "$([bool]$AltTabRotateMembers)") } elseif ($VirtualDesktops) { @('--virtual-desktops') } else { @('--run', "$Switches", "$Cycles", "$DurationMinutes", "$Seed", "$randomize", "$RandomBatchesPerCycle") }
 $process = Start-Process -FilePath $hostExe -ArgumentList $driverArguments -WorkingDirectory $stage -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $stage 'stdout.log') -RedirectStandardError (Join-Path $stage 'stderr.log')
 $handle = $process.Handle
 $shown = @{ 'stdout.log'=0; 'stderr.log'=0 }
