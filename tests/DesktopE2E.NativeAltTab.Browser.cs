@@ -297,8 +297,9 @@ static partial class DesktopE2E
                     });
                     Check(target!=IntPtr.Zero,
                           "No isolated ungrouped browser window has an unobscured center");
-                    var r=Bounds(target);
-                    var point=new Point((r.Left+r.Right)/2,(r.Top+r.Bottom)/2);
+                    var selectedBounds=Bounds(target);
+                    var point=new Point((selectedBounds.Left+selectedBounds.Right)/2,
+                                        (selectedBounds.Top+selectedBounds.Bottom)/2);
                     Move(point);
                     await Task.Delay(35);
                     Inject(MouseInput(2)); await Task.Delay(30); Inject(MouseInput(4));
