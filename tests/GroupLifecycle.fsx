@@ -836,7 +836,7 @@ let main() =
                     // and callback routing without depending on Explorer's UI.
                     // It does NOT simulate shell selection or prove Win11
                     // delivers this message during a real Alt+Tab attempt.
-                    let activate hwnd state =
+                    let activate (hwnd:IntPtr) (state:int) =
                         WinUserApi.SendMessage(hwnd,WindowMessages.WM_ACTIVATE,IntPtr(state),IntPtr.Zero) |> ignore
                     let host = button.window.hwnd
                     let preview = (button.tryTabWindow "a").Value.hwnd
