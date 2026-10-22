@@ -162,3 +162,42 @@ module AltTabFocusTrace =
                         timer.Dispose()
                         record "recorder-stop" IntPtr.Zero ""
                         flush()}
+
+
+/// Optional, *event-driven* activation handoff probe. Unlike the foreground
+/// flight recorder, this installs NO LL keyboard hook, WinEvent hook or timer.
+/// It only logs actual native proxy WM_ACTIVATE and WindowTabs tab requests.
+/// It cannot reveal which item was highlighted in Explorer's native switcher.
+module ActivationHandoffProbe =
+    let private folder = AppDomain.CurrentDomain.BaseDirectory
+    let enabled = IO.File.Exists(IO.Path.Combine(folder,"activation-probe.enabled"))
+    let private path = IO.Path.Combine(folder,"activation-probe.jsonl")
+    let private gate = obj()
+    let private started = Stopwatch.StartNew()
+    let mutable private sequence = 0L
+
+    let record (stage:string) (hwnd:IntPtr) (detail:string) =
+        if enabled then
+            try
+                let id = Interlocked.Increment(&sequence)
+                let foreground = WinUserApi.GetForegroundWindow()
+                let entry = JObject(
+                    JProperty("utc",DateTime.UtcNow.ToString("O")),
+                    JProperty("seq",id),
+                    JProperty("elapsedMs",started.ElapsedMilliseconds),
+                    JProperty("stage",stage),
+                    JProperty("hwnd",hwnd.ToInt64()),
+                    JProperty("foreground",foreground.ToInt64()),
+                    JProperty("detail",detail)).ToString(Formatting.None)
+                // Avoid synchronous file IO inside external apps' or Explorer's
+                // activation path. Work items are serialized by a single gate.
+                ThreadPool.QueueUserWorkItem(fun _ ->
+                    lock gate (fun () ->
+                        try
+                            // Event-only log, capped even across long-running sessions.
+                            if IO.File.Exists(path) && IO.FileInfo(path).Length>2L*1024L*1024L then
+                                IO.File.Copy(path,IO.Path.Combine(folder,"activation-probe.previous.jsonl"),true)
+                                IO.File.WriteAllText(path,String.Empty)
+                            IO.File.AppendAllText(path,entry+Environment.NewLine)
+                        with _ -> ())) |> ignore
+            with _ -> ()

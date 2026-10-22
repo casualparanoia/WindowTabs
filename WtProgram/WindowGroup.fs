@@ -894,6 +894,16 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
             // raising the old *owned* HWND would cover the genuinely active tab
             // without changing Windows' actual foreground HWND.
             let actual = this.os.foreground.hwnd
+            if ActivationHandoffProbe.enabled &&
+               (this.windows.contains(hwnd) || this.windows.contains(actual) ||
+                this.windows.contains(foregroundCell.value)) then
+                // This group already subscribes to native foreground events;
+                // add no additional OS hook. Distinguish the callback HWND
+                // from the current foreground, since callbacks may be stale.
+                ActivationHandoffProbe.record "group-foreground-event" hwnd
+                    (sprintf "actual=%d previous=%d callbackIsMember=%b actualIsMember=%b"
+                        (actual.ToInt64()) (foregroundCell.value.ToInt64())
+                        (this.windows.contains(hwnd)) (this.windows.contains(actual)))
             if this.windows.contains(hwnd) then
                 let window = this.os.windowFromHwnd(hwnd)
                 if ForegroundRaisePolicy.shouldRaise hwnd actual window.isOwned window.isMinimized then
@@ -1126,12 +1136,21 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
         
     member this.tabActivate(Tab(hwnd), force) =
         let window = this.os.windowFromHwnd(hwnd)
+        if ActivationHandoffProbe.enabled then
+            ActivationHandoffProbe.record "tab-activation-enter" hwnd
+                (sprintf "force=%b minimized=%b owner=%d" force window.isMinimized
+                    (WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER).ToInt64()))
         // The strip is owned by the top window and only follows a new top window once the
         // foreground event comes back through the group. Until then the activated window
         // covers it, which flashes whenever the tabs sit inside the title bar. Owned windows
         // are raised with their owner, so hand the strip over before activating.
         if this.windows.contains(hwnd) then this.setTsOwner(window)
         window.setForegroundOrRestore(force)
+        if ActivationHandoffProbe.enabled then
+            // This is observed foreground after the native request, NOT the
+            // BOOL return of SetForegroundWindow (which existing code discards).
+            ActivationHandoffProbe.record "tab-activation-after-request" hwnd
+                (sprintf "foregroundIsTarget=%b" (this.os.foreground.hwnd=hwnd))
         window.bringToTop()
         // Activated but still under the other tabs when its owner is a combined taskbar's preview;
         // only once it is in front, as a refused activation leaves the strip with the real top window.
@@ -1140,6 +1159,10 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
         // Activation can be refused (foreground lock); keep the strip with the real top window.
         this.inZorder(this.windows.items).tryHead |> Option.iter (fun top ->
             if top <> hwnd then this.setTsOwner(this.os.windowFromHwnd(top)))
+        if ActivationHandoffProbe.enabled then
+            ActivationHandoffProbe.record "tab-activation-after-zorder" hwnd
+                (sprintf "foregroundIsTarget=%b topIsTarget=%b"
+                    (this.os.foreground.hwnd=hwnd) (this.inZorder(this.windows.items).tryHead=Some hwnd))
 
     member this.onTabMoved(hwnd, index) = movedEvent.Trigger(hwnd, index)
 

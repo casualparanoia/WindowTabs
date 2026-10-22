@@ -536,9 +536,17 @@ type TaskBarButton(info) as this =
             // WM_ACTIVATE, WM_SHOWWINDOW, WM_ACTIVATEAPP, WM_MOUSEACTIVATE, WM_SYSCOMMAND
             if msg=0x06 || msg=0x18 || msg=0x1C || msg=0x21 || msg=0x112 then
                 TaskbarPreviewTrace.write "message" hwnd "" (sprintf "msg=0x%X wParam=0x%X" msg (wParam.ToInt64()))
+            // A narrowly scoped alternative to the full Alt+Tab flight recorder.
+            // These messages are evidence of proxy involvement, NOT evidence
+            // that Explorer selected that proxy in the native switcher.
+            if ActivationHandoffProbe.enabled && (msg=0x06 || msg=0x1C || msg=0x21) then
+                ActivationHandoffProbe.record "proxy-message" hwnd
+                    (sprintf "role=%s message=0x%X wParam=%d" dwmWindow.role msg (wParam.ToInt64()))
             match msg with
             | WindowMessages.WM_ACTIVATE ->
-                if WinDefApi.LOWORD(wParam) = int16(ActivateStateValues.WA_ACTIVE) then 
+                if WinDefApi.LOWORD(wParam) = int16(ActivateStateValues.WA_ACTIVE) then
+                    ActivationHandoffProbe.record "proxy-activation-forwarded" hwnd
+                        (sprintf "role=%s" dwmWindow.role)
                     dwmWindow.activate()
                     0
                 else m.def()
@@ -895,8 +903,12 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
                         members.list |> List.filter(fun hwnd -> this.appOf hwnd <> topApp)
                         |> List.distinctBy this.appOf |> List.truncate TaskbarBadgedIcon.maxStacked
                         |> List.map(fun hwnd -> this.ts.tabInfo(Tab(hwnd)).iconBig)
-                    activate = fun() -> this.invokeAsync <| fun() ->
-                        this.tabActivate(Tab(this.members.head), true)
+                    activate = fun() ->
+                        ActivationHandoffProbe.record "host-callback" IntPtr.Zero "dispatch-requested"
+                        this.invokeAsync <| fun() ->
+                            let target = this.members.head
+                            ActivationHandoffProbe.record "host-activation-dispatched" target "force=true"
+                            this.tabActivate(Tab(target), true)
                     toggleMinimizeRestore = fun() -> 
                         let hwnd = this.members.head
                         let window = this.os.windowFromHwnd(hwnd)
@@ -928,7 +940,9 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
                             activate = fun() ->
                                 let (Tab(hwnd)) = tab
                                 TaskbarPreviewTrace.write "tab-activate" hwnd "" ""
+                                ActivationHandoffProbe.record "preview-callback" hwnd "dispatch-requested"
                                 this.invokeAsync <| fun() ->
+                                    ActivationHandoffProbe.record "preview-activation-dispatched" hwnd "force=false"
                                     this.tabActivate(tab, false)
                                     TaskbarPreviewTrace.write "tab-activated" hwnd ""
                                         (sprintf "foreground=%d" (WinUserApi.GetForegroundWindow().ToInt64()))

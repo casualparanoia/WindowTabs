@@ -822,14 +822,34 @@ let main() =
             do
                 let previewRequests = ResizeArray<string * bool>()
                 let mutable previewActivations = 0
+                let mutable hostActivations = 0
                 let tab text : string * TbButtonTab =
                     text, { icon=Drawing.SystemIcons.Application; text=text; activate=(fun () -> previewActivations <- previewActivations+1); close=ignore
                             preview=fun thumbnail -> previewRequests.Add(text,thumbnail); Some(Img(Sz(320,200))) }
                 let info texts : TbButton =
                     { icon=Drawing.SystemIcons.Application; otherIcons=[]; text="Order"; bounds=Rect(Pt(-20000,-20000),Sz(320,200))
-                      activate=ignore; toggleMinimizeRestore=ignore; close=ignore; tabs=List2(texts |> List.map tab) }
+                      activate=(fun () -> hostActivations <- hostActivations+1)
+                      toggleMinimizeRestore=ignore; close=ignore; tabs=List2(texts |> List.map tab) }
                 let button = new TaskBarButton(info ["a";"b"])
                 try
+                    // Synthetic WM_ACTIVATE exercises our *native proxy WndProc*
+                    // and callback routing without depending on Explorer's UI.
+                    // It does NOT simulate shell selection or prove Win11
+                    // delivers this message during a real Alt+Tab attempt.
+                    let activate (hwnd:IntPtr) (state:int) =
+                        WinUserApi.SendMessage(hwnd,WindowMessages.WM_ACTIVATE,IntPtr(state),IntPtr.Zero) |> ignore
+                    let host = button.window.hwnd
+                    let preview = (button.tryTabWindow "a").Value.hwnd
+                    activate host 1 // WA_ACTIVE: host routes to group front tab
+                    activate preview 1 // WA_ACTIVE: preview routes to its tab
+                    check (hostActivations=1 && previewActivations=1)
+                          "Native WM_ACTIVATE did not route to host and per-tab callbacks"
+                    activate host 0 // WA_INACTIVE does not invoke callback
+                    activate preview 0
+                    check (hostActivations=1 && previewActivations=1)
+                          "A proxy deactivation incorrectly dispatched another activation"
+                    previewActivations <- 0
+                    hostActivations <- 0
                     // The taskbar window owns the previews, so their windows keep to its virtual desktop.
                     let previewOwner key = WinUserApi.GetWindow((button.tryTabWindow key).Value.hwnd,GetWindowConstants.GW_OWNER)
                     check (["a";"b"] |> List.forall(fun key -> previewOwner key=button.window.hwnd))
