@@ -1,6 +1,7 @@
 param([switch]$Interactive, [switch]$BuildOnly, [switch]$Describe, [switch]$VirtualDesktops,
       [switch]$NativeAltTab, [ValidateRange(2, 200)][int]$AltTabSwitches = 20,
       [switch]$AltTabRotateMembers, [switch]$AltTabExtraAnchor, [switch]$AltTabTwoGroups,
+      [switch]$AltTabBrowser, [string]$BrowserExecutable,
       [string]$ReleaseExecutable,
       [ValidateSet('Quick','Full','Soak')][string]$Profile = 'Full',
       [int]$Seed = 0,
@@ -12,6 +13,11 @@ param([switch]$Interactive, [switch]$BuildOnly, [switch]$Describe, [switch]$Virt
 $ErrorActionPreference = 'Stop'
 if ($AltTabRotateMembers -and -not $NativeAltTab) { throw 'AltTabRotateMembers requires NativeAltTab.' }
 if ($AltTabTwoGroups -and -not $NativeAltTab) { throw 'AltTabTwoGroups requires NativeAltTab.' }
+if ($AltTabBrowser -and -not $NativeAltTab) { throw 'AltTabBrowser requires NativeAltTab.' }
+if ($BrowserExecutable -and -not $AltTabBrowser) { throw 'BrowserExecutable requires AltTabBrowser.' }
+if ($AltTabBrowser -and ($AltTabTwoGroups -or $AltTabRotateMembers -or $AltTabExtraAnchor)) {
+    throw 'AltTabBrowser is an independent workload; omit the WinForms AltTab variant switches.'
+}
 if ($AltTabTwoGroups -and ($AltTabRotateMembers -or $AltTabExtraAnchor)) { throw 'AltTabTwoGroups is an independent workload; omit AltTabRotateMembers and AltTabExtraAnchor.' }
 if ($AltTabExtraAnchor -and (-not $NativeAltTab -or -not $AltTabRotateMembers)) { throw 'AltTabExtraAnchor requires NativeAltTab and AltTabRotateMembers.' }
 if ($NativeAltTab -and $VirtualDesktops) { throw 'NativeAltTab and VirtualDesktops are independent workloads.' }
@@ -39,7 +45,9 @@ if ($DurationMinutes -gt 0 -and $TimeoutSeconds -lt ($DurationMinutes * 60 + 60)
 }
 $randomize = $Profile -eq 'Soak'
 if ($randomize -and -not $PSBoundParameters.ContainsKey('Seed')) { $Seed = Get-Random -Minimum 1 -Maximum ([int]::MaxValue) }
-$configuration = if ($NativeAltTab -and $AltTabTwoGroups) {
+$configuration = if ($NativeAltTab -and $AltTabBrowser) {
+    [pscustomobject]@{ Workload='NativeAltTabBrowser'; Switches=$AltTabSwitches; IsolatedProfile=$true; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
+} elseif ($NativeAltTab -and $AltTabTwoGroups) {
     [pscustomobject]@{ Workload='NativeAltTabTwoGroups'; Switches=$AltTabSwitches; GroupCount=2; MembersPerGroup=2; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
 } elseif ($NativeAltTab) {
     [pscustomobject]@{ Workload='NativeAltTab'; Switches=$AltTabSwitches; RotateMembers=[bool]$AltTabRotateMembers; ExtraAnchor=[bool]$AltTabExtraAnchor; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
@@ -95,15 +103,42 @@ Write-Host "Desktop E2E reference assemblies: $frameworkReferenceRoot"
 $taskbarAutomationReferences = $requiredReferences | ForEach-Object {
     "/r:$(Join-Path $frameworkReferenceRoot $_)"
 }
-& $compiler /nologo /target:exe /platform:x86 "/out:$hostExe" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:Accessibility.dll @taskbarAutomationReferences "/win32manifest:$repo/WtProgram/app.manifest" (Join-Path $PSScriptRoot 'DesktopE2E.cs') (Join-Path $PSScriptRoot 'DesktopE2E.VirtualDesktops.cs') (Join-Path $PSScriptRoot 'DesktopE2E.NativeAltTab.cs') (Join-Path $PSScriptRoot 'DesktopE2E.NativeAltTab.Groups.cs')
+& $compiler /nologo /target:exe /platform:x86 "/out:$hostExe" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:Accessibility.dll @taskbarAutomationReferences "/win32manifest:$repo/WtProgram/app.manifest" (Join-Path $PSScriptRoot 'DesktopE2E.cs') (Join-Path $PSScriptRoot 'DesktopE2E.VirtualDesktops.cs') (Join-Path $PSScriptRoot 'DesktopE2E.NativeAltTab.cs') (Join-Path $PSScriptRoot 'DesktopE2E.NativeAltTab.Groups.cs') (Join-Path $PSScriptRoot 'DesktopE2E.NativeAltTab.Browser.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Desktop E2E compilation failed.' }
 & $hostExe --check-random-plan
 if ($LASTEXITCODE -ne 0) { throw 'Random action planner checks failed.' }
 @{ appSha256=(Get-FileHash -LiteralPath (Join-Path $stage 'WindowTabs.exe')).Hash; virtualDesktops=[bool]$VirtualDesktops; profile=$Profile; switches=$Switches; cycles=$Cycles; durationMinutes=$DurationMinutes; randomize=$randomize; seed=$Seed; randomBatchesPerCycle=$RandomBatchesPerCycle; randomPlanVersion=1; createdUtc=[DateTime]::UtcNow.ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'manifest.json')
 Write-Host "Desktop E2E artifacts: $stage"
 if ($BuildOnly) { return }
+if ($AltTabBrowser) {
+    if (-not $BrowserExecutable) {
+        # Prefer Vivaldi because the reported native Alt+Tab problem
+        # involves Vivaldi; allow a caller-supplied explicit path for
+        # portable or nonstandard installations.
+        $candidatePaths = @(
+            (Join-Path $env:LOCALAPPDATA 'Vivaldi/Application/vivaldi.exe'),
+            (Join-Path $env:ProgramFiles 'Vivaldi/Application/vivaldi.exe'),
+            (Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Vivaldi/Application/vivaldi.exe')
+        )
+        $BrowserExecutable = $candidatePaths | Where-Object {
+            Test-Path -LiteralPath $_ -PathType Leaf
+        } | Select-Object -First 1
+    }
+    if (-not $BrowserExecutable) {
+        throw 'Vivaldi was not found in its standard installation locations. Supply -BrowserExecutable with the full path to vivaldi.exe, chrome.exe, chromium.exe, or msedge.exe.'
+    }
+    $browserPath = (Resolve-Path -LiteralPath $BrowserExecutable -ErrorAction Stop).Path
+    if (([IO.Path]::GetExtension($browserPath) -ne '.exe') -or
+        ([IO.Path]::GetFileName($browserPath) -notin @('vivaldi.exe','chrome.exe','chromium.exe','msedge.exe'))) {
+        throw 'BrowserExecutable must be a Chromium-family browser executable (Vivaldi/Chrome/Chromium/Edge).'
+    }
+    # File avoids PowerShell Start-Process's space-sensitive argument
+    # quoting, and is read only by this E2E stage's own driver.
+    Set-Content -LiteralPath (Join-Path $stage 'browser-executable.txt') -Value $browserPath -NoNewline
+    Write-Host "Isolated test browser: $([IO.Path]::GetFileName($browserPath)) (fresh temporary profile)"
+}
 if ($VirtualDesktops -or $NativeAltTab) { Copy-Item -LiteralPath $hostExe -Destination (Join-Path $stage 'DesktopAnchor.exe') }
-$driverArguments = if ($NativeAltTab -and $AltTabTwoGroups) { @('--native-alt-tab-two-groups', "$AltTabSwitches") } elseif ($NativeAltTab) { @('--native-alt-tab', "$AltTabSwitches", "$([bool]$AltTabRotateMembers)", "$([bool]$AltTabExtraAnchor)") } elseif ($VirtualDesktops) { @('--virtual-desktops') } else { @('--run', "$Switches", "$Cycles", "$DurationMinutes", "$Seed", "$randomize", "$RandomBatchesPerCycle") }
+$driverArguments = if ($NativeAltTab -and $AltTabBrowser) { @('--native-alt-tab-browser', "$AltTabSwitches") } elseif ($NativeAltTab -and $AltTabTwoGroups) { @('--native-alt-tab-two-groups', "$AltTabSwitches") } elseif ($NativeAltTab) { @('--native-alt-tab', "$AltTabSwitches", "$([bool]$AltTabRotateMembers)", "$([bool]$AltTabExtraAnchor)") } elseif ($VirtualDesktops) { @('--virtual-desktops') } else { @('--run', "$Switches", "$Cycles", "$DurationMinutes", "$Seed", "$randomize", "$RandomBatchesPerCycle") }
 $process = Start-Process -FilePath $hostExe -ArgumentList $driverArguments -WorkingDirectory $stage -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $stage 'stdout.log') -RedirectStandardError (Join-Path $stage 'stderr.log')
 $handle = $process.Handle
 $shown = @{ 'stdout.log'=0; 'stderr.log'=0 }
