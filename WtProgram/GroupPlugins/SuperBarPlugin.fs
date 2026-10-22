@@ -825,18 +825,24 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
                     for tab in tabs do
                         if not(placedTabs.Contains tab) && moveToDesktop(tab,target) then placedTabs.Add tab |> ignore)
                 this.members.iter <| fun hwnd ->
-                    // A window this group held that another group's button now holds has moved
-                    // there; its removal has not arrived yet. Taking it back would let this group's
-                    // cleanup leave it with no owner. It stays marked as held, or the next refresh
-                    // would take it as new; its removal clears that. A window new to this group may
-                    // be taken over.
-                    let owner = WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)
-                    let movedAway = adopted.Contains hwnd && owner<>IntPtr.Zero && TaskbarProxies.contains owner && not(taskbarButton.ownsApplication hwnd)
-                    if not movedAway then
-                        taskbarButton.adoptWindow hwnd
-                        if adopted.Add hwnd then
-                            this.os.windowFromHwnd(hwnd).parkIfMinimized()
-                            this.wtGroup.prepareMinimizeAnchor hwnd
+                    if preserveOwners then
+                        // Synthetic host/tab HWNDs are registered through
+                        // RegisterTab/SetTabOrder. Removing an app's taskbar
+                        // item via DeleteTab need not change its native owner.
+                        adopted.Add hwnd |> ignore
+                    else
+                        // A window this group held that another group's button now holds has moved
+                        // there; its removal has not arrived yet. Taking it back would let this group's
+                        // cleanup leave it with no owner. It stays marked as held, or the next refresh
+                        // would take it as new; its removal clears that. A window new to this group may
+                        // be taken over.
+                        let owner = WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)
+                        let movedAway = adopted.Contains hwnd && owner<>IntPtr.Zero && TaskbarProxies.contains owner && not(taskbarButton.ownsApplication hwnd)
+                        if not movedAway then
+                            taskbarButton.adoptWindow hwnd
+                            if adopted.Add hwnd then
+                                this.os.windowFromHwnd(hwnd).parkIfMinimized()
+                                this.wtGroup.prepareMinimizeAnchor hwnd
             placed
         else false
 
@@ -1048,6 +1054,11 @@ type SuperBarPlugin(canShareInput:IntPtr -> bool, ?desktopOf:IntPtr -> Guid opti
         captureTimer.Stop()
         placementRetry.Stop()
         if taskbarButton=null || adopted.Count=0 then complete()
+        elif preserveOwners then
+            // The real HWNDs were never owned by WindowTabs. Restore their
+            // native taskbar entries, then dispose registered proxy previews.
+            this.onGroupExited()
+            complete()
         else
             let button = taskbarButton
             let owner = button.window.hwnd
