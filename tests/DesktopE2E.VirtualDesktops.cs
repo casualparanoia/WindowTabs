@@ -76,21 +76,26 @@ static partial class DesktopE2E
         Check(DwmGetWindowAttribute(window,14,out value,4)==0,"DWM cloak query failed for "+window);
         return value!=0;
     }
-    static void RunDesktopAnchor()
+    static void RunDesktopAnchor(int placement=0)
     {
         Application.EnableVisualStyles();
         var area=Screen.PrimaryScreen.WorkingArea;
+        // Separate external entries must be independently clickable.
+        // The original right-corner placement is unchanged for the
+        // existing virtual-desktop workload (placement=0).
+        var x=placement==0 ? area.Right-260 : area.Left+20;
         using(var anchor=new Form { Text="WindowTabs E2E desktop anchor",StartPosition=FormStartPosition.Manual,
-            Location=new Point(area.Right-260,area.Bottom-130),Size=new Size(240,100) })
+            Location=new Point(x,area.Bottom-130),Size=new Size(240,100) })
         {
             anchor.Shown+=(s,e)=>ShowWindow(anchor.Handle,4);
             Application.Run(anchor);
         }
     }
-    static async Task<DesktopAnchor> StartAnchor(bool verifyDesktop=true)
+    static async Task<DesktopAnchor> StartAnchor(bool verifyDesktop=true, int placement=0)
     {
         var anchor=new DesktopAnchor();
-        anchor.Process=Process.Start(new ProcessStartInfo(Path.Combine(Root,"DesktopAnchor.exe"),"--desktop-anchor") {
+        var arguments=placement==0 ? "--desktop-anchor" : "--desktop-anchor "+placement;
+        anchor.Process=Process.Start(new ProcessStartInfo(Path.Combine(Root,"DesktopAnchor.exe"),arguments) {
             WorkingDirectory=Root,UseShellExecute=false,WindowStyle=ProcessWindowStyle.Hidden });
         Anchors.Add(anchor);
         await Until("Desktop anchor did not start",()=> {
