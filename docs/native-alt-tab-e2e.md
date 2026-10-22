@@ -33,7 +33,26 @@ pwsh -NoProfile -File ./tests/Run-DesktopE2E.ps1 -Interactive -NativeAltTab -Alt
 ```
 
 The rotating case checks the newly selected member each time, rather than
-100 switches to an unchanged app HWND. In both modes, the harness additionally
+100 switches to an unchanged app HWND.
+
+To add **a second independent external window** and alternate which external
+window is the recent Alt+Tab counterpart of the group, use:
+
+```powershell
+pwsh -NoProfile -File ./tests/Run-DesktopE2E.ps1 -Interactive -NativeAltTab -AltTabRotateMembers -AltTabExtraAnchor -AltTabSwitches 20
+```
+
+This yields **three real switchable entities** (one combined two-tab group
+and two separate external processes). A known recent group member and
+one anchor are explicitly activated before each two-switch pair; the
+selected anchor alternates on successive pairs. This tests a busier native
+MRU history without assuming the ordering of every shell tile, and
+preserves the simple baseline as a separate mode. A passing run does
+not assert that the shell successfully navigates all three entries in
+one held-Alt operation. An existing unrelated application can still
+interfere, and such a mismatch is classified separately.
+
+In all modes, the harness additionally
 checks that the **visible top-level window at the center of the expected app**
 matches the expected foreground HWND. This detects cases where an app reports
 foreground but a different window is visibly stacked over it. The live hit test
