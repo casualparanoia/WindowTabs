@@ -13,6 +13,32 @@ using System.Windows.Forms;
 
 static partial class DesktopE2E
 {
+    [DllImport("user32.dll")]
+    static extern IntPtr GetAncestor(IntPtr window, uint flags);
+
+    // GA_ROOT=2. WindowFromPoint can return a child control instead of the
+    // visible top-level application window, so normalize its hit-test result.
+    static IntPtr TopLevelAt(Point point)
+    {
+        var hit=WindowFromPoint(point);
+        return hit==IntPtr.Zero?IntPtr.Zero:GetAncestor(hit,2);
+    }
+
+    static async Task ClickNativeAltTabAnchor(DesktopAnchor anchor)
+    {
+        var r=Bounds(anchor.Window);
+        var point=new Point((r.Left+r.Right)/2,(r.Top+r.Bottom)/2);
+        Check(TopLevelAt(point)==anchor.Window,
+              "Independent anchor is occluded; refusing to click another window");
+        Move(point);
+        await Task.Delay(35);
+        Inject(MouseInput(2));
+        await Task.Delay(35);
+        Inject(MouseInput(4));
+        await Until("Independent anchor did not become foreground after click",
+                    ()=>GetForegroundWindow()==anchor.Window);
+    }
+
     static IntPtr AltTabRootOwner(IntPtr hwnd)
     {
         var seen=new HashSet<IntPtr>();
@@ -41,7 +67,7 @@ static partial class DesktopE2E
         Inject(KeyInput(0x12,true));
     }
 
-    static async Task RunNativeAltTab(int switches)
+    static async Task RunNativeAltTab(int switches, bool rotateMembers)
     {
         phase="native Alt+Tab preflight";
         Check(switches>=2 && switches%2==0,"Native Alt+Tab count must be a positive even number");
@@ -87,22 +113,9 @@ static partial class DesktopE2E
             // the two application HWNDs. It is our known external MRU target.
             phase="native Alt+Tab anchor";
             var anchor=await StartAnchor(verifyDesktop:false);
-            // This workload deliberately does not initialize virtual-desktop
-            // COM. Use a real mouse click to establish the independent
-            // foreground/MRU target rather than requesting SetForegroundWindow
-            // from a background driver (which Windows may deny).
-            var anchorRect=Bounds(anchor.Window);
-            var anchorPoint=new Point((anchorRect.Left+anchorRect.Right)/2,
-                                      (anchorRect.Top+anchorRect.Bottom)/2);
-            Check(WindowFromPoint(anchorPoint)==anchor.Window,
-                  "Independent anchor is occluded; refusing to click another window");
-            Move(anchorPoint);
-            await Task.Delay(35);
-            Inject(MouseInput(2));
-            await Task.Delay(35);
-            Inject(MouseInput(4));
-            await Until("Independent anchor did not become foreground after click",
-                        ()=>GetForegroundWindow()==anchor.Window);
+            // A real click establishes independent MRU and foreground; do
+            // not use background SetForegroundWindow or virtual-desktop COM.
+            await ClickNativeAltTabAnchor(anchor);
             var lastGroupMember=order.Last();
             // Alternate between anchor and the one combined group. This is
             // a falsifiable 2-entity MRU test; no guesses about Explorer's
@@ -111,6 +124,18 @@ static partial class DesktopE2E
             for(int i=0;i<switches;i++)
             {
                 step="native switch "+(i+1)+"/"+switches;
+                if(rotateMembers && i%2==0)
+                {
+                    // Every pair creates a fresh A->anchor->A' MRU sequence
+                    // while changing the group's actual active member. The
+                    // original nonrotating mode remains a stable baseline.
+                    var index=(i/2)%order.Count;
+                    lastGroupMember=order[index];
+                    Remember("rotate-group-member",new {index,member=lastGroupMember.ToInt64()});
+                    await Click(strip,index,order.Count);
+                    await Activated(lastGroupMember,strip);
+                    await ClickNativeAltTabAnchor(anchor);
+                }
                 var expected=(i%2==0)?lastGroupMember:anchor.Window;
                 var before=GetForegroundWindow();
                 Remember("native-alt-tab-before",new {index=i,from=before.ToInt64(),
@@ -128,11 +153,24 @@ static partial class DesktopE2E
                 Check(observed==expected,
                       "Native Explorer Alt+Tab selected/activated unexpected HWND at step "+i+
                       "; expected="+expected+" actual="+observed);
+                // Foreground HWND alone can look correct while another
+                // grouped application visually covers the active member.
+                // Probe the center of the fixture's blank WinForms client
+                // surface, away from WindowTabs' attached title strip.
+                await Task.Delay(55);
+                var bounds=Bounds(expected);
+                var point=new Point((bounds.Left+bounds.Right)/2,(bounds.Top+bounds.Bottom)/2);
+                var visible=TopLevelAt(point);
+                Remember("native-alt-tab-hit-test",new {index=i,expected=expected.ToInt64(),
+                    visible=visible.ToInt64(),x=point.X,y=point.Y});
+                Check(visible==expected,
+                      "Native Alt+Tab foreground HWND is correct but expected window is not visually on top at step "+i+
+                      "; expected="+expected+" topAtCenter="+visible);
                 totalSwitches++;
                 await Task.Delay(120); // avoid overlapping a still-closing switcher
             }
             completed=1;
-            Log("PASS: "+totalSwitches+" native Explorer Alt+Tab toggles between one combined group and independent anchor.");
+            Log("PASS: "+totalSwitches+" native Explorer Alt+Tab toggles between one combined group and independent anchor (rotateMembers="+rotateMembers+"); foreground and hit-test agreed.");
         }
         finally
         {
