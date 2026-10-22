@@ -894,6 +894,16 @@ type WindowGroup(enableSuperBar:bool, plugins:List2<IPlugin>, initialAppearance:
             // raising the old *owned* HWND would cover the genuinely active tab
             // without changing Windows' actual foreground HWND.
             let actual = this.os.foreground.hwnd
+            if ActivationHandoffProbe.enabled &&
+               (this.windows.contains(hwnd) || this.windows.contains(actual) ||
+                this.windows.contains(foregroundCell.value)) then
+                // This group already subscribes to native foreground events;
+                // add no additional OS hook. Distinguish the callback HWND
+                // from the current foreground, since callbacks may be stale.
+                ActivationHandoffProbe.record "group-foreground-event" hwnd
+                    (sprintf "actual=%d previous=%d callbackIsMember=%b actualIsMember=%b"
+                        (actual.ToInt64()) (foregroundCell.value.ToInt64())
+                        (this.windows.contains(hwnd)) (this.windows.contains(actual)))
             if this.windows.contains(hwnd) then
                 let window = this.os.windowFromHwnd(hwnd)
                 if ForegroundRaisePolicy.shouldRaise hwnd actual window.isOwned window.isMinimized then
