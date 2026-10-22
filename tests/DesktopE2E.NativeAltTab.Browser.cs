@@ -258,10 +258,14 @@ static partial class DesktopE2E
             {
                 // Genuine unmanaged control: no WindowTabs.exe was launched
                 // and no taskbar owner/proxy was created by this fixture.
-                Check(app==null && members.All(h=>GetWindow(h,4)==IntPtr.Zero),
-                      "Ungrouped quick-MRU baseline has an unexpected owner/proxy");
+                Check(app==null,
+                      "Ungrouped quick-MRU baseline must not launch WindowTabs");
+                // Browser-specific ownership is allowed. Record native
+                // roots without assuming every Chromium browser is
+                // ownerless; we are testing the absence of WindowTabs.
                 Remember("browser-ungrouped-control-ready",new {
-                    browserPid,members=members.Select(h=>h.ToInt64()).ToArray()
+                    browserPid,members=members.Select(h=>h.ToInt64()).ToArray(),
+                    owners=members.Select(h=>GetWindow(h,4).ToInt64()).ToArray()
                 });
             }
 
