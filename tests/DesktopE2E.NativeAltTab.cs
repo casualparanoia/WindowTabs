@@ -16,7 +16,7 @@ static partial class DesktopE2E
     [DllImport("user32.dll", SetLastError=true)]
     static extern bool SetForegroundWindow(IntPtr window);
 
-    static IntPtr RootOwner(IntPtr hwnd)
+    static IntPtr AltTabRootOwner(IntPtr hwnd)
     {
         var seen=new HashSet<IntPtr>();
         for(int i=0;i<12 && hwnd!=IntPtr.Zero;i++)
@@ -79,8 +79,8 @@ static partial class DesktopE2E
             await Until("Combined group has not established shared GW_OWNER root",()=>{
                 var first=GetWindow(order[0],4); var second=GetWindow(order[1],4);
                 return first!=IntPtr.Zero && second!=IntPtr.Zero &&
-                    first!=second && RootOwner(order[0])==RootOwner(order[1]); },10000);
-            var root=RootOwner(order[0]);
+                    first!=second && AltTabRootOwner(order[0])==AltTabRootOwner(order[1]); },10000);
+            var root=AltTabRootOwner(order[0]);
             Check(!handles.Contains(root),"Combined group root owner is a real member, not synthetic host");
             Remember("combined-group-ready",new {
                 host=root.ToInt64(),members=order.Select(h=>h.ToInt64()).ToArray(),
@@ -104,7 +104,7 @@ static partial class DesktopE2E
                 var expected=(i%2==0)?lastGroupMember:anchor.Window;
                 var before=GetForegroundWindow();
                 Remember("native-alt-tab-before",new {index=i,from=before.ToInt64(),
-                    expected=expected.ToInt64(),groupRoot=RootOwner(lastGroupMember).ToInt64()});
+                    expected=expected.ToInt64(),groupRoot=AltTabRootOwner(lastGroupMember).ToInt64()});
                 await NativeAltTabChord();
                 var timeout=Stopwatch.StartNew();
                 while(GetForegroundWindow()!=expected && timeout.ElapsedMilliseconds<1600)
