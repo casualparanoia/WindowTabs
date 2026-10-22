@@ -85,15 +85,16 @@ static partial class DesktopE2E
 
     static async Task BrowserNativeSwitch(
         int index, IntPtr expected, IntPtr strip, List<IntPtr> members,
-        IntPtr anchor, int browserPid)
+        IntPtr anchor, int browserPid, bool quick=false, bool ungrouped=false)
     {
-        step="browser-native-switch "+(index+1);
+        step=(quick?"quick-MRU-":"browser-")+"native-switch "+(index+1);
         var before=GetForegroundWindow();
         Remember("browser-native-before",new {
             index,from=before.ToInt64(),expected=expected.ToInt64(),
-            activeStripOwner=GetWindow(strip,4).ToInt64(),browserPid
+            activeStripOwner=strip==IntPtr.Zero?0:GetWindow(strip,4).ToInt64(),
+            browserPid,quick,ungrouped,keyHoldMs=quick?35:125
         });
-        await NativeAltTabChord();
+        await NativeAltTabChord(quick?35:125);
         var timer=Stopwatch.StartNew();
         var transitions=new List<object>();
         var last=before;
@@ -116,7 +117,8 @@ static partial class DesktopE2E
         if(observed!=expected)
         {
             var mismatch=new {
-                mode="isolated-chromium-browser",
+                mode=quick?(ungrouped?"quick-MRU-ungrouped-control":"quick-MRU-grouped"):
+                       "isolated-chromium-browser",
                 index,browserPid,elapsedMs=timer.ElapsedMilliseconds,
                 before=DescribeNativeAltTabWindow(before),
                 expected=DescribeNativeAltTabWindow(expected),
@@ -132,11 +134,11 @@ static partial class DesktopE2E
         Check(observed==expected,
               "Native Alt+Tab chose unexpected HWND on isolated browser switch "+(index+1)+
               "; expected="+expected+" observed="+observed+" (see foreground-mismatch.json)");
-        if(members.Contains(expected))
+        if(members.Contains(expected) && !ungrouped)
         {
             await Activated(expected,strip);
         }
-        await Task.Delay(55);
+        await Task.Delay(quick?35:55);
         var r=Bounds(expected);
         var center=new Point((r.Left+r.Right)/2,(r.Top+r.Bottom)/2);
         var visible=TopLevelAt(center);
@@ -147,14 +149,22 @@ static partial class DesktopE2E
               "Correct native Alt+Tab foreground but another window obscures isolated browser/anchor"+
               "; expected="+expected+" visible="+visible);
         totalSwitches++;
-        await Task.Delay(120);
+        await Task.Delay(quick?35:120);
     }
 
-    static async Task RunNativeAltTabBrowser(int switches, bool lifecycle=false)
+    // Set ungrouped=true only with quickMru. Both quick variants create
+    // exactly two real browser HWNDs and one external anchor, then switch
+    // repeatedly between the same known most-recent pair with NO re-priming
+    // clicks. The only difference is whether staged WindowTabs is running.
+    static async Task RunNativeAltTabBrowser(int switches, bool lifecycle=false,
+                                             bool quickMru=false, bool ungrouped=false)
     {
-        phase=lifecycle ? "browser membership lifecycle preflight" :
+        phase=quickMru ? "quick native two-entry MRU preflight" :
+              lifecycle ? "browser membership lifecycle preflight" :
                           "isolated browser native Alt+Tab preflight";
         Check(switches>=2 && switches%2==0,"Browser Alt+Tab count must be even and at least 2");
+        Check(!ungrouped || quickMru,"Ungrouped browser control requires quick-MRU mode");
+        Check(!quickMru || !lifecycle,"Quick-MRU and browser lifecycle are separate workloads");
         Check(!lifecycle || switches>=6,
               "Browser lifecycle test requires at least 6 switches (2 per membership phase)");
         await Until("Release input before isolated browser test",
@@ -221,30 +231,109 @@ static partial class DesktopE2E
             // IncludedPaths targets the whole browser executable, not a PID:
             // demand exclusive use of this browser name while grouping.
             CheckNoUnrelatedBrowserWindows(browserPid,browserName);
-            Fixture(true,"auto",executable);
-            phase="isolated browser WindowTabs grouping";
-            app=Process.Start(new ProcessStartInfo(Path.Combine(Root,"WindowTabs.exe")) {
-                WorkingDirectory=Root,UseShellExecute=false
-            });
-            await Until("WindowTabs did not combine two browser HWNDs into one tab strip",
-                        ()=>BrowserGroupStrips(app.Id,browserWindows).Count==1,18000);
-            Check(!HasCrash(),"Staged WindowTabs crashed during browser grouping");
-            var strip=BrowserGroupStrips(app.Id,browserWindows).Single();
-            var members=await ReadOrder(strip,2,browserWindows);
-            var root=AltTabRootOwner(members[0]);
-            Check(!browserWindows.Contains(root) &&
-                  members.All(h=>GetWindow(h,4)!=IntPtr.Zero && AltTabRootOwner(h)==root),
-                  "Isolated browser windows did not share one synthetic native group owner root");
-            Remember("browser-group-ready",new {
-                browserPid,strip=strip.ToInt64(),ownerRoot=root.ToInt64(),
-                members=members.Select(h=>h.ToInt64()).ToArray()
-            });
+            var strip=IntPtr.Zero;
+            var members=new List<IntPtr>(browserWindows);
+            if(!ungrouped)
+            {
+                Fixture(true,"auto",executable);
+                phase="isolated browser WindowTabs grouping";
+                app=Process.Start(new ProcessStartInfo(Path.Combine(Root,"WindowTabs.exe")) {
+                    WorkingDirectory=Root,UseShellExecute=false
+                });
+                await Until("WindowTabs did not combine two browser HWNDs into one tab strip",
+                            ()=>BrowserGroupStrips(app.Id,browserWindows).Count==1,18000);
+                Check(!HasCrash(),"Staged WindowTabs crashed during browser grouping");
+                strip=BrowserGroupStrips(app.Id,browserWindows).Single();
+                members=await ReadOrder(strip,2,browserWindows);
+                var root=AltTabRootOwner(members[0]);
+                Check(!browserWindows.Contains(root) &&
+                      members.All(h=>GetWindow(h,4)!=IntPtr.Zero && AltTabRootOwner(h)==root),
+                      "Isolated browser windows did not share one synthetic native group owner root");
+                Remember("browser-group-ready",new {
+                    browserPid,strip=strip.ToInt64(),ownerRoot=root.ToInt64(),
+                    members=members.Select(h=>h.ToInt64()).ToArray()
+                });
+            }
+            else
+            {
+                // Genuine unmanaged control: no WindowTabs.exe was launched
+                // and no taskbar owner/proxy was created by this fixture.
+                Check(app==null && members.All(h=>GetWindow(h,4)==IntPtr.Zero),
+                      "Ungrouped quick-MRU baseline has an unexpected owner/proxy");
+                Remember("browser-ungrouped-control-ready",new {
+                    browserPid,members=members.Select(h=>h.ToInt64()).ToArray()
+                });
+            }
 
             phase="isolated browser Alt+Tab anchor";
             var anchor=await StartAnchor(verifyDesktop:false);
             await ClickNativeAltTabAnchor(anchor);
-            phase=lifecycle ? "native Alt+Tab browser membership lifecycle" :
+            phase=quickMru ? (ungrouped ? "quick MRU control without WindowTabs" :
+                                         "quick MRU with WindowTabs grouping") :
+                  lifecycle ? "native Alt+Tab browser membership lifecycle" :
                               "native Alt+Tab isolated Chromium group";
+
+            if(quickMru)
+            {
+                // A single known MRU pair is established ONCE. None of the
+                // following switches click a tab or anchor to rebuild MRU:
+                // each next Alt+Tab depends entirely on native Explorer's
+                // previous activation. Compared with legacy 125/120ms, use
+                // 35ms Alt hold + 35ms dwell after visual verification.
+                IntPtr target=IntPtr.Zero;
+                if(ungrouped)
+                {
+                    // With two overlapping ordinary browser windows, choose
+                    // a visible, directly clickable browser client center.
+                    // Do not click any personal windows or use SetForeground.
+                    target=members.FirstOrDefault(h=>{
+                        var r=Bounds(h);
+                        var p=new Point((r.Left+r.Right)/2,(r.Top+r.Bottom)/2);
+                        return TopLevelAt(p)==h;
+                    });
+                    Check(target!=IntPtr.Zero,
+                          "No isolated ungrouped browser window has an unobscured center");
+                    var r=Bounds(target);
+                    var point=new Point((r.Left+r.Right)/2,(r.Top+r.Bottom)/2);
+                    Move(point);
+                    await Task.Delay(35);
+                    Inject(MouseInput(2)); await Task.Delay(30); Inject(MouseInput(4));
+                    await Until("Ungrouped browser was not activated by a real click",
+                                ()=>GetForegroundWindow()==target);
+                }
+                else
+                {
+                    // ReadOrder selected the final browser member.
+                    target=members.Last();
+                    await Activated(target,strip);
+                }
+                CheckNoUnrelatedBrowserWindows(browserPid,browserName);
+                await ClickNativeAltTabAnchor(anchor);
+                Remember("quick-MRU-start",new {
+                    ungrouped,grouped=!ungrouped,
+                    browserTarget=target.ToInt64(),anchor=anchor.Window.ToInt64(),
+                    expectedInitialForeground=anchor.Window.ToInt64(),
+                    keyHoldMs=35,dwellAfterVisualMs=35,
+                    numberOfSetupClicks=ungrouped?2:1
+                });
+                for(int j=0;j<switches;j++)
+                {
+                    CheckNoUnrelatedBrowserWindows(browserPid,browserName);
+                    var expected=(j%2==0)?target:anchor.Window;
+                    var prior=(j%2==0)?anchor.Window:target;
+                    Check(GetForegroundWindow()==prior,
+                          "Quick-MRU chain lost its expected foreground before Alt+Tab: expected="+
+                          prior+" actual="+GetForegroundWindow());
+                    await BrowserNativeSwitch(j,expected,strip,members,anchor.Window,browserPid,
+                                              quick:true,ungrouped:ungrouped);
+                }
+                completed=1;
+                Log("PASS: "+totalSwitches+
+                    " rapid two-entry Vivaldi native Alt+Tab switches, no inter-switch clicks "+
+                    "(WindowTabs="+(!ungrouped)+", AltHoldMs=35, afterVisualMs=35).");
+                return;
+            }
+
             // Explicit, bounded three-phase workload: 2 -> 3 -> 2 browser
             // windows. Each phase gets at least one complete Alt+Tab pair.
             // The baseline mode remains unchanged.
