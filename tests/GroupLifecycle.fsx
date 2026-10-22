@@ -864,6 +864,63 @@ let main() =
                     check (not(WinUserApi.IsWindow leaving) && not(TaskbarProxies.contains leaving)) "A preview that left kept its window"
                 finally (button :> IDisposable).Dispose()
 
+            // The Peek thumbnail workaround detaches preview owners from the
+            // shared host, but each real application continues to be owned by
+            // its own preview. This deliberately changes the *root owners* of
+            // real grouped windows for the duration of the thumbnail popup.
+            // Assert the exact native topology, not a claim about how modern
+            // Explorer enumerates the Alt+Tab switcher.
+            do
+                use first = new Form(Text="Root topology A",ShowInTaskbar=true,
+                    StartPosition=FormStartPosition.Manual,Bounds=Drawing.Rectangle(-19000,-19000,320,240))
+                use second = new Form(Text="Root topology B",ShowInTaskbar=true,
+                    StartPosition=FormStartPosition.Manual,Bounds=Drawing.Rectangle(-19000,-19000,320,240))
+                let firstHwnd,secondHwnd = first.Handle,second.Handle
+                let appHandles = [firstHwnd;secondHwnd]
+                for hwnd in appHandles do
+                    OS().windowFromHwnd(hwnd).showWindow(ShowWindowCommands.SW_SHOWNOACTIVATE)
+                let directOwner hwnd = WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)
+                check (appHandles |> List.forall(fun hwnd -> directOwner hwnd=IntPtr.Zero))
+                      "Alt+Tab root-owner fixture did not create independent application HWNDs"
+                let rec rootOwner (seen:Set<IntPtr>) (hwnd:IntPtr) =
+                    check (hwnd<>IntPtr.Zero && not(seen.Contains hwnd))
+                          "Native owner chain is missing or cyclic"
+                    let parent = directOwner hwnd
+                    if parent=IntPtr.Zero then hwnd else rootOwner (seen.Add hwnd) parent
+                let root hwnd = rootOwner Set.empty hwnd
+                let tab (hwnd:IntPtr) : string * TbButtonTab =
+                    TaskBarButton.key hwnd, {
+                        icon=Drawing.SystemIcons.Application
+                        text="Root topology"
+                        activate=ignore
+                        close=ignore
+                        preview=fun _ -> Some(Img(Sz(320,240))) }
+                let buttonInfo : TbButton = {
+                    icon=Drawing.SystemIcons.Application; otherIcons=[]; text="Root topology"
+                    bounds=Rect(Pt(-19000,-19000),Sz(320,240))
+                    activate=ignore; toggleMinimizeRestore=ignore; close=ignore
+                    tabs=List2(appHandles |> List.map tab) }
+                let button = new TaskBarButton(buttonInfo)
+                try
+                    for hwnd in appHandles do button.adoptWindow hwnd
+                    let host = button.window.hwnd
+                    let previews = appHandles |> List.map(fun hwnd ->
+                        (button.tryTabWindow(TaskBarButton.key hwnd)).Value.hwnd)
+                    check (List.forall2(fun hwnd preview -> directOwner hwnd=preview) appHandles previews)
+                          "Combined apps were not owned by their individual tab previews"
+                    check (appHandles |> List.forall(fun hwnd -> root hwnd=host))
+                          "Combined apps did not share the taskbar host's root owner"
+                    button.releasePreviews()
+                    check (button.arePreviewsReleased && previews |> List.forall(fun hwnd -> directOwner hwnd=IntPtr.Zero))
+                          "Peek release did not detach each tab preview from the shared host"
+                    check (List.forall2(fun hwnd preview -> root hwnd=preview) appHandles previews &&
+                           (previews |> List.distinct |> List.length)=appHandles.Length)
+                          "Peek release did not split the real applications into independent owner roots"
+                    printfn "PASS: Peek release temporarily splits the shared native owner root into separate per-tab roots."
+                finally (button :> IDisposable).Dispose()
+                check (appHandles |> List.forall(fun hwnd -> WinUserApi.IsWindow hwnd && directOwner hwnd=IntPtr.Zero))
+                      "Peek release fixture did not restore independent application ownership on disposal"
+
             // The setting rebuilds open groups that follow it, keeping what their tab menu chose.
             api.setValue("combineIconsInTaskbar", box false)
             let groupsOf hwnd = desktopApi.groups.list |> List.filter(fun g -> g.windows.contains((=)hwnd)) |> List.map(fun g -> g :?> GroupInfo)
