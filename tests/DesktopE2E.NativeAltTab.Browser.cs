@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 static partial class DesktopE2E
@@ -281,23 +282,67 @@ static partial class DesktopE2E
                 if(anchor.Process!=null) anchor.Process.Dispose();
             }
             Anchors.Clear();
+            var browserProcessCleanup=new List<object>();
+            var allBrowserProcessesExited=true;
             foreach(var launched in BrowserLaunchedProcesses)
             {
+                var pid=launched.Id;
+                var exited=false;
                 try
                 {
-                    if(!launched.HasExited && !launched.WaitForExit(1800))
+                    // Chromium's main and forwarding processes may still
+                    // flush SQLite/LevelDB files after closing the windows.
+                    // Let each spawned PID exit normally before forcing it.
+                    if(!launched.HasExited && !launched.WaitForExit(3000))
+                    {
                         launched.Kill();
+                        launched.WaitForExit(3000);
+                    }
+                    exited=launched.HasExited;
                 }
-                catch(Exception) { }
+                catch(Exception e)
+                {
+                    Log("NOTE: Could not confirm staged browser PID "+pid+
+                        " exited: "+e.GetType().Name);
+                }
+                allBrowserProcessesExited=allBrowserProcessesExited && exited;
+                browserProcessCleanup.Add(new {pid,exited});
                 launched.Dispose();
             }
             BrowserLaunchedProcesses.Clear();
             BrowserAllowedPids.Clear();
-            // Keep action/failure JSON but remove this temporary profile
-            // (which contains no personal browser state). If Chromium is
-            // still releasing files, report it without hiding test errors.
-            try { Directory.Delete(profile,true); }
-            catch(Exception e) { Log("NOTE: Isolated browser profile cleanup deferred: "+e.GetType().Name); }
+
+            // Never remove a profile when one of our spawned browser PIDs
+            // could still own open files. Otherwise retry only this unique
+            // test-stage directory, allowing Chromium children to release
+            // SQLite and IndexedDB handles. Do not touch default profiles.
+            var allExited=allBrowserProcessesExited;
+            var profileRemoved=false;
+            var cleanupAttempts=0;
+            string cleanupError=null;
+            if(allExited)
+            {
+                for(int attempt=0;attempt<12 && !profileRemoved;attempt++)
+                {
+                    cleanupAttempts++;
+                    try
+                    {
+                        if(Directory.Exists(profile)) Directory.Delete(profile,true);
+                        profileRemoved=!Directory.Exists(profile);
+                    }
+                    catch(IOException e) { cleanupError=e.Message; }
+                    catch(UnauthorizedAccessException e) { cleanupError=e.Message; }
+                    if(!profileRemoved) Thread.Sleep(350);
+                }
+            }
+            else cleanupError="One or more staged browser PIDs may still be running";
+            File.WriteAllText(Path.Combine(Root,"browser-cleanup.json"),Json.Serialize(new {
+                profileRemoved,cleanupAttempts,profileFolder=Path.GetFileName(profile),
+                spawnedProcesses=browserProcessCleanup.ToArray(),error=profileRemoved?null:cleanupError
+            }));
+            if(!profileRemoved)
+                Log("NOTE: Disposable browser profile remains at "+profile+
+                    "; see browser-cleanup.json. Remove only after all staged browser processes exit.");
         }
     }
 }
