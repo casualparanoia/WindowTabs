@@ -1,6 +1,6 @@
 param([switch]$Interactive, [switch]$BuildOnly, [switch]$Describe, [switch]$VirtualDesktops,
       [switch]$NativeAltTab, [ValidateRange(2, 200)][int]$AltTabSwitches = 20,
-      [switch]$AltTabRotateMembers, [switch]$AltTabExtraAnchor,
+      [switch]$AltTabRotateMembers, [switch]$AltTabExtraAnchor, [switch]$AltTabTwoGroups,
       [string]$ReleaseExecutable,
       [ValidateSet('Quick','Full','Soak')][string]$Profile = 'Full',
       [int]$Seed = 0,
@@ -11,6 +11,8 @@ param([switch]$Interactive, [switch]$BuildOnly, [switch]$Describe, [switch]$Virt
       [ValidateRange(60, 7200)][int]$TimeoutSeconds = 600)
 $ErrorActionPreference = 'Stop'
 if ($AltTabRotateMembers -and -not $NativeAltTab) { throw 'AltTabRotateMembers requires NativeAltTab.' }
+if ($AltTabTwoGroups -and -not $NativeAltTab) { throw 'AltTabTwoGroups requires NativeAltTab.' }
+if ($AltTabTwoGroups -and ($AltTabRotateMembers -or $AltTabExtraAnchor)) { throw 'AltTabTwoGroups is an independent workload; omit AltTabRotateMembers and AltTabExtraAnchor.' }
 if ($AltTabExtraAnchor -and (-not $NativeAltTab -or -not $AltTabRotateMembers)) { throw 'AltTabExtraAnchor requires NativeAltTab and AltTabRotateMembers.' }
 if ($NativeAltTab -and $VirtualDesktops) { throw 'NativeAltTab and VirtualDesktops are independent workloads.' }
 if ($NativeAltTab -and $AltTabSwitches % 2) { throw 'AltTabSwitches must be an even number.' }
@@ -37,7 +39,9 @@ if ($DurationMinutes -gt 0 -and $TimeoutSeconds -lt ($DurationMinutes * 60 + 60)
 }
 $randomize = $Profile -eq 'Soak'
 if ($randomize -and -not $PSBoundParameters.ContainsKey('Seed')) { $Seed = Get-Random -Minimum 1 -Maximum ([int]::MaxValue) }
-$configuration = if ($NativeAltTab) {
+$configuration = if ($NativeAltTab -and $AltTabTwoGroups) {
+    [pscustomobject]@{ Workload='NativeAltTabTwoGroups'; Switches=$AltTabSwitches; GroupCount=2; MembersPerGroup=2; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
+} elseif ($NativeAltTab) {
     [pscustomobject]@{ Workload='NativeAltTab'; Switches=$AltTabSwitches; RotateMembers=[bool]$AltTabRotateMembers; ExtraAnchor=[bool]$AltTabExtraAnchor; TimeoutSeconds=$TimeoutSeconds; RequiresExplorer=$true }
 } elseif ($VirtualDesktops) {
     [pscustomobject]@{ Workload='VirtualDesktops'; Scenarios=4; TemporaryDesktops=2; TimeoutSeconds=$TimeoutSeconds }
@@ -91,7 +95,7 @@ Write-Host "Desktop E2E reference assemblies: $frameworkReferenceRoot"
 $taskbarAutomationReferences = $requiredReferences | ForEach-Object {
     "/r:$(Join-Path $frameworkReferenceRoot $_)"
 }
-& $compiler /nologo /target:exe /platform:x86 "/out:$hostExe" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:Accessibility.dll @taskbarAutomationReferences "/win32manifest:$repo/WtProgram/app.manifest" (Join-Path $PSScriptRoot 'DesktopE2E.cs') (Join-Path $PSScriptRoot 'DesktopE2E.VirtualDesktops.cs') (Join-Path $PSScriptRoot 'DesktopE2E.NativeAltTab.cs')
+& $compiler /nologo /target:exe /platform:x86 "/out:$hostExe" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:Accessibility.dll @taskbarAutomationReferences "/win32manifest:$repo/WtProgram/app.manifest" (Join-Path $PSScriptRoot 'DesktopE2E.cs') (Join-Path $PSScriptRoot 'DesktopE2E.VirtualDesktops.cs') (Join-Path $PSScriptRoot 'DesktopE2E.NativeAltTab.cs') (Join-Path $PSScriptRoot 'DesktopE2E.NativeAltTab.Groups.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Desktop E2E compilation failed.' }
 & $hostExe --check-random-plan
 if ($LASTEXITCODE -ne 0) { throw 'Random action planner checks failed.' }
@@ -99,7 +103,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Random action planner checks failed.' }
 Write-Host "Desktop E2E artifacts: $stage"
 if ($BuildOnly) { return }
 if ($VirtualDesktops -or $NativeAltTab) { Copy-Item -LiteralPath $hostExe -Destination (Join-Path $stage 'DesktopAnchor.exe') }
-$driverArguments = if ($NativeAltTab) { @('--native-alt-tab', "$AltTabSwitches", "$([bool]$AltTabRotateMembers)", "$([bool]$AltTabExtraAnchor)") } elseif ($VirtualDesktops) { @('--virtual-desktops') } else { @('--run', "$Switches", "$Cycles", "$DurationMinutes", "$Seed", "$randomize", "$RandomBatchesPerCycle") }
+$driverArguments = if ($NativeAltTab -and $AltTabTwoGroups) { @('--native-alt-tab-two-groups', "$AltTabSwitches") } elseif ($NativeAltTab) { @('--native-alt-tab', "$AltTabSwitches", "$([bool]$AltTabRotateMembers)", "$([bool]$AltTabExtraAnchor)") } elseif ($VirtualDesktops) { @('--virtual-desktops') } else { @('--run', "$Switches", "$Cycles", "$DurationMinutes", "$Seed", "$randomize", "$RandomBatchesPerCycle") }
 $process = Start-Process -FilePath $hostExe -ArgumentList $driverArguments -WorkingDirectory $stage -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $stage 'stdout.log') -RedirectStandardError (Join-Path $stage 'stderr.log')
 $handle = $process.Handle
 $shown = @{ 'stdout.log'=0; 'stderr.log'=0 }
