@@ -308,18 +308,32 @@ static partial class DesktopE2E
                 }
                 else
                 {
-                    // ReadOrder selected the final browser member.
+                    // ReadOrder selected the final browser member, but the
+                    // setup ABOVE already clicked the newly launched anchor.
+                    // It is therefore foreground right now. Explicitly
+                    // activate the grouped member ONCE before reactivating
+                    // the anchor to establish a known browser -> anchor MRU.
+                    // Never run Activated() immediately after anchor click
+                    // without a new real tab click: that erroneously asserts
+                    // browser foreground while the anchor is foreground.
                     target=members.Last();
+                    phase="quick MRU grouped pair setup";
+                    await Click(strip,members.Count-1,members.Count);
                     await Activated(target,strip);
                 }
                 CheckNoUnrelatedBrowserWindows(browserPid,browserName);
                 await ClickNativeAltTabAnchor(anchor);
+                phase=ungrouped ? "quick MRU control without WindowTabs" :
+                                  "quick MRU with WindowTabs grouping";
                 Remember("quick-MRU-start",new {
                     ungrouped,grouped=!ungrouped,
                     browserTarget=target.ToInt64(),anchor=anchor.Window.ToInt64(),
                     expectedInitialForeground=anchor.Window.ToInt64(),
                     keyHoldMs=35,dwellAfterVisualMs=35,
-                    numberOfSetupClicks=ungrouped?2:1
+                    // Both modes perform one explicit *final* browser
+                    // activation before the anchor activation. None occur
+                    // after the first Alt+Tab chord.
+                    finalPairSetupClicks=2
                 });
                 for(int j=0;j<switches;j++)
                 {
