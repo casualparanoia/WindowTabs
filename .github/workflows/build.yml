@@ -61,6 +61,9 @@ jobs:
       - name: Validate passive Alt+Tab trace correlation
         run: python tests/test_analyze_alt_tab_traces.py
 
+      - name: Validate isolated Alt+Tab matrix report classifier
+        run: python tests/test_analyze_native_alt_tab_topology_matrix.py
+
       # The 2x2 fixture manipulates only disposable windows in interactive mode.
       # CI compiles its C# and runs a pure factorial/struct-layout plan check.
       - name: Compile isolated Alt+Tab topology matrix (Windows PowerShell)
