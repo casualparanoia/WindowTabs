@@ -94,8 +94,13 @@ sealed class ShellTopologyMatrix
             c.ExStyle = WS_EX_LAYERED | (host ? WS_EX_NOACTIVATE | WS_EX_APPWINDOW : 0);
             c.X = bounds.X; c.Y = bounds.Y; c.Width = bounds.Width; c.Height = bounds.Height;
             CreateHandle(c);
-            Check(SetLayeredWindowAttributes(Handle, 0, 0, LWA_ALPHA), "Cannot make fixture proxy transparent");
-            if (host) ShowWindow(Handle, 4); // SW_SHOWNOACTIVATE; all four cells get the same host
+            try {
+                Check(SetLayeredWindowAttributes(Handle, 0, 0, LWA_ALPHA), "Cannot make fixture proxy transparent");
+                if (host) ShowWindow(Handle, 4); // SW_SHOWNOACTIVATE; all four cells get the same host
+            } catch {
+                if (Handle != IntPtr.Zero) DestroyHandle();
+                throw;
+            }
         }
         public void Dispose() { if (Handle != IntPtr.Zero) DestroyHandle(); }
     }
@@ -140,8 +145,13 @@ sealed class ShellTopologyMatrix
                 FormBorderStyle=FormBorderStyle.FixedSingle,
                 MaximizeBox=false
             };
-            form.Show();
-            return form;
+            try {
+                form.Show();
+                return form;
+            } catch {
+                form.Dispose();
+                throw;
+            }
         }
 
         public void Configure()
