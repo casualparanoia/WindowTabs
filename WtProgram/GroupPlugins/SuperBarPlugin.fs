@@ -367,7 +367,7 @@ type TaskBarButton(info) as this =
         if not (thumbnailsShown()) then
             if AltTabFocusTrace.enabled then
                 AltTabFocusTrace.record "taskbar-preview-rechain-before" this.window.hwnd
-                    (sprintf "count=%d active=%d" tabWindowsCell.value.count (activeTab.ToInt64()))
+                    (sprintf "count=%d active=%d" tabWindowsCell.value.values.count (activeTab.ToInt64()))
             rechain.Stop()
             previewsReleased <- false
             // A preview whose owner changes is no longer one of the button's tabs to Explorer:
@@ -385,7 +385,7 @@ type TaskBarButton(info) as this =
             if activeTab<>IntPtr.Zero && WinUserApi.IsWindow activeTab then showActive activeTab
             if AltTabFocusTrace.enabled then
                 AltTabFocusTrace.record "taskbar-preview-rechain-after" this.window.hwnd
-                    (sprintf "count=%d active=%d" tabWindowsCell.value.count (activeTab.ToInt64())))
+                    (sprintf "count=%d active=%d" tabWindowsCell.value.values.count (activeTab.ToInt64())))
     let _window = lazy(
         let config() : TbButton = infoCell.value.Value
         
@@ -456,7 +456,7 @@ type TaskBarButton(info) as this =
         if not previewsReleased then
             if AltTabFocusTrace.enabled then
                 AltTabFocusTrace.record "taskbar-preview-release" this.window.hwnd
-                    (sprintf "count=%d active=%d" tabWindowsCell.value.count (activeTab.ToInt64()))
+                    (sprintf "count=%d active=%d" tabWindowsCell.value.values.count (activeTab.ToInt64()))
             previewsReleased <- true
             tabWindowsCell.value.values.iter <| fun (tab:TaskbarTab) -> chainPreview tab.window.hwnd
         rechain.Stop()
