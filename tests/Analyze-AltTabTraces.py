@@ -104,7 +104,13 @@ def correlation(passive, internal=None, minimum_seconds=0.65):
         # Alt hold or after a new chord is not a failure signal.
         left = bisect.bisect_left(samples_times, time + minimum_seconds)
         right = bisect.bisect_left(samples_times, min(next_press_time, time + 1.8))
-        persistent = [r for r in samples[left:right] if is_hidden_explorer(r)]
+        # The pump schedules samples per pressed Tab, not per released Alt.
+        # A delayed sample from an earlier chord must not be attributed to
+        # the current completed switch even if its timestamp falls in range.
+        chord_id = start.get('chordId')
+        persistent = [r for r in samples[left:right]
+                      if chord_id is not None and r.get('chordId') == chord_id
+                      and is_hidden_explorer(r)]
         if not persistent:
             continue
         first = persistent[0]
