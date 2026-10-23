@@ -297,7 +297,13 @@ type TaskBarButton(info) as this =
     let addTab hwnd =
         StartupTrace.measure "taskbar.proxy.add" (fun () -> taskbar.AddTab(hwnd))
     let registerTab(hwndTab) = 
+        if AltTabFocusTrace.enabled then
+            AltTabFocusTrace.record "taskbar-preview-register-before" hwndTab
+                (sprintf "host=%d" (this.window.hwnd.ToInt64()))
         StartupTrace.measure "taskbar.preview.register" (fun () -> taskbar.RegisterTab(hwndTab, this.window.hwnd))
+        if AltTabFocusTrace.enabled then
+            AltTabFocusTrace.record "taskbar-preview-register-after" hwndTab
+                (sprintf "host=%d" (this.window.hwnd.ToInt64()))
         TaskbarPreviewTrace.write "register" hwndTab "" (sprintf "host=%d" (this.window.hwnd.ToInt64()))
     /// Each preview goes to the end in turn, which leaves them in the strip's order.
     let sendTabOrder() =
@@ -332,29 +338,54 @@ type TaskBarButton(info) as this =
             ((shown popup && explorer<>0 && snd (WinUserApi.GetWindowThreadProcessId(popup))=explorer) || anyPopup popup)
         shown legacy || anyPopup IntPtr.Zero
     let chainPreview (preview:IntPtr) =
-        WinUserApi.SetWindowLong(preview,WindowLongFieldOffset.GWL_HWNDPARENT,
-            (if previewsReleased then IntPtr.Zero else this.window.hwnd)) |> ignore
+        let requestedOwner = if previewsReleased then IntPtr.Zero else this.window.hwnd
+        if AltTabFocusTrace.enabled then
+            let previous = WinUserApi.GetWindow(preview,GetWindowConstants.GW_OWNER)
+            AltTabFocusTrace.record "taskbar-preview-owner-before" preview
+                (sprintf "previous=%d requested=%d previewsReleased=%b"
+                    (previous.ToInt64()) (requestedOwner.ToInt64()) previewsReleased)
+        WinUserApi.SetWindowLong(preview,WindowLongFieldOffset.GWL_HWNDPARENT,requestedOwner) |> ignore
+        if AltTabFocusTrace.enabled then
+            let current = WinUserApi.GetWindow(preview,GetWindowConstants.GW_OWNER)
+            AltTabFocusTrace.record "taskbar-preview-owner-after" preview
+                (sprintf "actual=%d requested=%d previewsReleased=%b"
+                    (current.ToInt64()) (requestedOwner.ToInt64()) previewsReleased)
     /// The preview shown as the group's active tab.
     let mutable activeTab = IntPtr.Zero
     let showActive (preview:IntPtr) =
+        if AltTabFocusTrace.enabled then
+            AltTabFocusTrace.record "taskbar-active-before" preview
+                (sprintf "host=%d prior=%d" (this.window.hwnd.ToInt64()) (activeTab.ToInt64()))
         activeTab <- preview
         taskbar.ActivateTab(this.window.hwnd)
         taskbar.SetTabActive(preview,this.window.hwnd,0)
+        if AltTabFocusTrace.enabled then
+            AltTabFocusTrace.record "taskbar-active-after" preview
+                (sprintf "host=%d" (this.window.hwnd.ToInt64()))
     let rechain = new System.Windows.Forms.Timer(Interval=400)
     do rechain.Tick.Add(fun _ ->
         if not (thumbnailsShown()) then
+            if AltTabFocusTrace.enabled then
+                AltTabFocusTrace.record "taskbar-preview-rechain-before" this.window.hwnd
+                    (sprintf "count=%d active=%d" tabWindowsCell.value.values.count (activeTab.ToInt64()))
             rechain.Stop()
             previewsReleased <- false
             // A preview whose owner changes is no longer one of the button's tabs to Explorer:
             // each is registered again, in order, with the active one marked.
             tabWindowsCell.value.values.iter <| fun (tab:TaskbarTab) ->
                 chainPreview tab.window.hwnd
+                if AltTabFocusTrace.enabled then
+                    AltTabFocusTrace.record "taskbar-preview-unregister" tab.window.hwnd
+                        (sprintf "host=%d" (this.window.hwnd.ToInt64()))
                 taskbar.UnregisterTab(tab.window.hwnd)
                 registerTab(tab.window.hwnd)
                 // Explorer keeps thumbnails it was given; asked again, the previews are let go again.
                 tab.invalidate()
             sendTabOrder()
-            if activeTab<>IntPtr.Zero && WinUserApi.IsWindow activeTab then showActive activeTab)
+            if activeTab<>IntPtr.Zero && WinUserApi.IsWindow activeTab then showActive activeTab
+            if AltTabFocusTrace.enabled then
+                AltTabFocusTrace.record "taskbar-preview-rechain-after" this.window.hwnd
+                    (sprintf "count=%d active=%d" tabWindowsCell.value.values.count (activeTab.ToInt64())))
     let _window = lazy(
         let config() : TbButton = infoCell.value.Value
         
@@ -423,6 +454,9 @@ type TaskBarButton(info) as this =
     /// Explorer is showing the group's thumbnails: a click on one must open that tab.
     member this.releasePreviews() =
         if not previewsReleased then
+            if AltTabFocusTrace.enabled then
+                AltTabFocusTrace.record "taskbar-preview-release" this.window.hwnd
+                    (sprintf "count=%d active=%d" tabWindowsCell.value.values.count (activeTab.ToInt64()))
             previewsReleased <- true
             tabWindowsCell.value.values.iter <| fun (tab:TaskbarTab) -> chainPreview tab.window.hwnd
         rechain.Stop()
@@ -599,6 +633,9 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
                     | _ ->
                         msg.def()
                 | WindowMessages.WM_DWMSENDICONICTHUMBNAIL ->
+                    if AltTabFocusTrace.enabled && not parent.arePreviewsReleased then
+                        AltTabFocusTrace.record "taskbar-dwm-preview-request" msg.hwnd
+                            (sprintf "kind=thumbnail host=%d" (parent.window.hwnd.ToInt64()))
                     parent.releasePreviews()
                     let msgWindow = os.windowFromHwnd(msg.hwnd)
                     TaskbarPreviewTrace.write "thumbnail-request" msg.hwnd key ""
@@ -606,6 +643,9 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
                         (TaskbarPreview.centre msg.lParam.size) msgWindow.dwmSetIconicThumbnail
                     msg.def()
                 | WindowMessages.WM_DWMSENDICONICLIVEPREVIEWBITMAP ->
+                    if AltTabFocusTrace.enabled && not parent.arePreviewsReleased then
+                        AltTabFocusTrace.record "taskbar-dwm-preview-request" msg.hwnd
+                            (sprintf "kind=live host=%d" (parent.window.hwnd.ToInt64()))
                     parent.releasePreviews()
                     let msgWindow = os.windowFromHwnd(msg.hwnd)
                     TaskbarPreviewTrace.write "request" msg.hwnd key (sprintf "host=%d" (parent.window.hwnd.ToInt64()))
@@ -631,7 +671,11 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
     // TaskBarButton.releasePreviews.
 
     member this.adoptWindow hwnd =
-        if WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)<>_window.hwnd then
+        let previousOwner = WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER)
+        if previousOwner<>_window.hwnd then
+            if AltTabFocusTrace.enabled then
+                AltTabFocusTrace.record "taskbar-app-adopt-before" hwnd
+                    (sprintf "previous=%d proxy=%d" (previousOwner.ToInt64()) (_window.hwnd.ToInt64()))
             StartupTrace.measure "taskbar.owner" (fun () ->
                 WinUserApi.SetWindowLong(hwnd,WindowLongFieldOffset.GWL_HWNDPARENT,_window.hwnd) |> ignore
                 // A new owner keeps its place in the z-order, which can be above the window it now
@@ -640,6 +684,9 @@ and TaskbarTab(parent:TaskBarButton, config,size,key) =
                 // goes just below the window, as an owner would be.
                 WinUserApi.SetWindowPos(_window.hwnd,hwnd,0,0,0,0,
                     SetWindowPosFlags.SWP_NOMOVE ||| SetWindowPosFlags.SWP_NOSIZE ||| SetWindowPosFlags.SWP_NOACTIVATE) |> ignore)
+            if AltTabFocusTrace.enabled then
+                AltTabFocusTrace.record "taskbar-app-adopt-after" hwnd
+                    (sprintf "actual=%d proxy=%d" (WinUserApi.GetWindow(hwnd,GetWindowConstants.GW_OWNER).ToInt64()) (_window.hwnd.ToInt64()))
         ownedWindow <- hwnd
 
     /// Destroying an owner also destroys its owned windows; a preview never owns their lifetime.
