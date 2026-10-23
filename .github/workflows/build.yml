@@ -53,6 +53,14 @@ jobs:
         shell: pwsh
         run: ./tests/Run-PassiveAltTabTrace.ps1 -BuildOnly
 
+      # Offline correlation tests are synthetic; no hooks or desktop input in CI.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Validate passive Alt+Tab trace correlation
+        run: python tests/test_analyze_alt_tab_traces.py
+
       - name: Upload Release diagnostics
         if: always()
         uses: actions/upload-artifact@v6
