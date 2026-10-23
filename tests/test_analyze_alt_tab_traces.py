@@ -32,12 +32,12 @@ class CorrelationTests(unittest.TestCase):
     def setUp(self):
         self.passive = [
             record(0.00, 'recorder-start'),
-            record(1.00, 'alt-tab'),
+            record(1.00, 'alt-tab', chordId=100),
             record(1.11, 'alt-release', EXPLORER),
             record(1.15, 'foreground', APP),
             record(1.16, 'foreground', EXPLORER),
-            record(2.02, 'post-alt-tab-sample', EXPLORER),
-            record(2.70, 'alt-tab', EXPLORER),
+            record(2.02, 'post-alt-tab-sample', EXPLORER, chordId=100),
+            record(2.70, 'alt-tab', EXPLORER, chordId=101),
             record(2.80, 'recorder-stop'),
         ]
         self.internal = [
@@ -65,6 +65,16 @@ class CorrelationTests(unittest.TestCase):
     def test_new_chord_invalidates_old_late_sample(self):
         self.passive.append(record(1.60, 'alt-tab', EXPLORER))
         self.passive.sort(key=lambda r: r['_time'])
+        self.assertEqual(analyzer.correlation(self.passive)['candidates'], [])
+
+    def test_stale_sample_from_other_chord_does_not_count(self):
+        # Late samples exist concurrently; timestamp proximity alone
+        # must not attribute an older chord's observations to this release.
+        self.passive[5]['chordId'] = 99
+        self.assertEqual(analyzer.correlation(self.passive)['candidates'], [])
+
+    def test_missing_chord_id_does_not_fabricate_anomaly(self):
+        del self.passive[5]['chordId']
         self.assertEqual(analyzer.correlation(self.passive)['candidates'], [])
 
     def test_visible_shell_is_not_persistent_hidden_host(self):
