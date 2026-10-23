@@ -27,22 +27,23 @@ def event(name, stage, data=None):
 def fixture():
     rows = [event("startup", "run-start", {"switchesPerCell": 2})]
     for name, registered, own in analyzer.FACTORS:
-        rows.extend([
-            event(name, "topology", {
-                "name": name, "registered": registered, "nativeOwnership": own
-            }),
-            event(name, "before-chord", {"step": 1}),
-            event(name, "post-chord-sample", {
-                "step": 1, "requestedDelayMs": 120, "actualDelayMs": 122,
-                "expectedHwnd": 200, "observed": APP
-            }),
-            event(name, "post-chord-sample", {
-                "step": 1, "requestedDelayMs": 900, "actualDelayMs": 903,
-                "expectedHwnd": 200, "observed": APP
-            }),
-            event(name, "switch-passed", {"step": 1}),
-            event(name, "cell-complete", {"switches": 1}),
-        ])
+        rows.append(event(name, "topology", {
+            "name": name, "registered": registered, "nativeOwnership": own
+        }))
+        for step in (1, 2):
+            rows.extend([
+                event(name, "before-chord", {"step": step}),
+                event(name, "post-chord-sample", {
+                    "step": step, "requestedDelayMs": 120, "actualDelayMs": 122,
+                    "expectedHwnd": 200, "observed": APP
+                }),
+                event(name, "post-chord-sample", {
+                    "step": step, "requestedDelayMs": 900, "actualDelayMs": 903,
+                    "expectedHwnd": 200, "observed": APP
+                }),
+                event(name, "switch-passed", {"step": step}),
+            ])
+        rows.append(event(name, "cell-complete", {"switches": 2}))
     rows.append(event("register-on_owner-on", "run-complete", {"cells": 4}))
     return rows
 
@@ -60,8 +61,8 @@ class TopologyAnalyzerTests(unittest.TestCase):
         self.assertEqual(len(result["cells"]), 4)
         for row in result["cells"].values():
             self.assertEqual(row["status"], "completed")
-            self.assertEqual(row["attempted"], 1)
-            self.assertEqual(row["passed"], 1)
+            self.assertEqual(row["attempted"], 2)
+            self.assertEqual(row["passed"], 2)
             self.assertEqual(row["persistentHiddenExplorer"], 0)
 
     def test_persistent_hidden_shell_is_classified(self):
@@ -104,6 +105,17 @@ class TopologyAnalyzerTests(unittest.TestCase):
         cell = result["cells"]["register-on_owner-on"]
         self.assertEqual(cell["status"], "incomplete")
         self.assertEqual(cell["incompleteAttempts"], 1)
+
+    def test_missing_declared_switch_is_not_reported_complete(self):
+        rows = fixture()
+        rows = [r for r in rows if not (
+            r["scenario"] == "register-on_owner-on"
+            and r["data"].get("step") == 2
+        )]
+        result = analyzer.analyze(rows)
+        self.assertFalse(result["runComplete"])
+        self.assertEqual(result["cells"]["register-on_owner-on"]["status"], "incomplete")
+        self.assertEqual(result["cells"]["register-on_owner-on"]["attempted"], 1)
 
     def test_unexecuted_cells_are_not_run(self):
         rows = fixture()
