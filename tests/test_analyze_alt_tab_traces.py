@@ -83,6 +83,31 @@ class CorrelationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'do not overlap'):
             analyzer.correlation(self.passive, self.internal)
 
+    def test_preview_owner_handoff_stages_are_attributed(self):
+        self.internal.extend([
+            record(1.30, 'taskbar-dwm-preview-request', 7777, internal=True),
+            record(1.31, 'taskbar-preview-release', 6666, internal=True),
+            record(1.33, 'taskbar-preview-owner-after', 0, internal=True),
+            record(1.60, 'taskbar-preview-rechain-before', 6666, internal=True),
+            record(1.70, 'taskbar-preview-rechain-after', 6666, internal=True),
+            record(1.75, 'taskbar-active-after', 7777, internal=True),
+        ])
+        self.internal.sort(key=lambda r: r['_time'])
+        result = analyzer.correlation(self.passive, self.internal)
+        self.assertEqual(len(result['candidates']), 1)
+        actions = result['candidates'][0]['windowtabs_actions_before_observation']
+        self.assertEqual(actions['taskbar-preview-release'], 1)
+        self.assertEqual(actions['taskbar-preview-owner-after'], 1)
+        self.assertEqual(actions['taskbar-preview-rechain-after'], 1)
+        self.assertEqual(actions['taskbar-active-after'], 1)
+
+    def test_handoff_after_foreground_observation_is_not_attributed(self):
+        self.internal.append(record(2.30, 'taskbar-preview-release', 6666, internal=True))
+        self.internal.sort(key=lambda r: r['_time'])
+        result = analyzer.correlation(self.passive, self.internal)
+        self.assertNotIn('taskbar-preview-release',
+                         result['candidates'][0]['windowtabs_actions_before_observation'])
+
 
 if __name__ == '__main__':
     unittest.main()
