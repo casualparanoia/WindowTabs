@@ -157,3 +157,52 @@ absence of proxy activation messages is not proof the proxy was uninvolved.
 For a useful controlled session, compare the same two applications with
 taskbar combining off, on, then off. Mark an observed failed selection via
 Ctrl+Shift+F12, and retain the full JSONL file for correlation.
+
+## Temporary preview-owner handoff: read-only correlation
+
+The combined taskbar host and per-tab proxy windows are not static throughout
+the taskbar thumbnail lifecycle. A DWM iconic thumbnail or live-preview request
+on a per-tab proxy calls `TaskBarButton.releasePreviews()`: the per-tab proxies
+temporarily lose their `GW_OWNER` link to the combined host, but **real
+application windows remain owned by their individual proxies**. A 400 ms timer
+reconnects those proxy owners (if no taskbar thumbnail popup is visible),
+unregisters/re-registers the proxy thumbnails, restores tab order, and calls
+`ActivateTab` / `SetTabActive`.
+
+This flow existed before the diagnostic addition. It is a **plausible,
+unconfirmed interaction** with native Explorer Alt+Tab enumeration and must not
+be patched merely because a failure used a combined owner root.
+
+With `focus-trace.enabled`, WindowTabs now records bounded events surrounding
+that previously unobserved lifecycle:
+
+- `taskbar-dwm-preview-request` identifies the first thumbnail/live
+  request before each preview-release interval.
+- `taskbar-preview-release` and `taskbar-preview-owner-before/after`
+  show the actual numeric proxy `GW_OWNER` transition to zero, and whether
+  Windows accepted it.
+- `taskbar-preview-rechain-before/after`,
+  `taskbar-preview-unregister`, and
+  `taskbar-preview-register-before/after` bracket re-registration.
+- `taskbar-active-before/after` bracket the shell taskbar display-state
+  notifications `ITaskbarList::ActivateTab` and
+  `ITaskbarList3::SetTabActive`. Neither API is a request to transfer
+  foreground to an actual application.
+- `taskbar-app-adopt-before/after` records owner reassignment when a real
+  application first joins its per-tab proxy.
+
+No new timer, input hook, Win32 state change, or foreground override is added.
+When tracing is disabled, these new records do not run. Instrumentation on
+the trace-enabled process can still affect timing, so a temporal correlation
+is **not** causal proof. This opt-in data captures HWND/owner and numerical
+group IDs; it deliberately does not capture titles or application contents.
+
+Use `tests/Analyze-AltTabTraces.py` from the next stacked diagnostic PR to
+display these stage counts near a persistent hidden Explorer foreground sample.
+In particular, distinguish a preview owner-chain mutation *preceding* a failed
+shell switch from one occurring *after* the failure, and distinguish taskbar
+button state notifications from true Win32 foreground activation.
+
+**The previous 2026-10-23 recording cannot settle this hypothesis**, because
+this owner-handoff instrumentation was not yet present. Do not ask for another
+manual 600-switch exercise; collect opportunistically only if needed.
