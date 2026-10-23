@@ -115,12 +115,20 @@ sealed class ShellTopologyMatrix
             Name = "register-" + (register ? "on" : "off") + "_owner-" + (own ? "on" : "off");
             int left=workingArea.Left, top=workingArea.Top;
             var hostBounds = new Rectangle(left+60,top+120,580,390);
-            Host = new TransparentProxy(hostBounds,true);
-            ProxyA = new TransparentProxy(hostBounds,false);
-            ProxyB = new TransparentProxy(hostBounds,false);
-            A = MakeForm("A",new Point(left+60,top+120));
-            B = MakeForm("B",new Point(left+700,top+120));
-            Anchor = MakeForm("anchor",new Point(left+400,top+550));
+            // NativeWindow and WinForms construction can throw partway through.
+            // Reclaim anything created before the exception, not only on the
+            // normal "using Cell" path (which starts after this constructor).
+            try {
+                Host = new TransparentProxy(hostBounds,true);
+                ProxyA = new TransparentProxy(hostBounds,false);
+                ProxyB = new TransparentProxy(hostBounds,false);
+                A = MakeForm("A",new Point(left+60,top+120));
+                B = MakeForm("B",new Point(left+700,top+120));
+                Anchor = MakeForm("anchor",new Point(left+400,top+550));
+            } catch {
+                Dispose();
+                throw;
+            }
         }
 
         static Form MakeForm(string role, Point point)
@@ -192,27 +200,34 @@ sealed class ShellTopologyMatrix
             // CRITICAL: destroying a proxy owner would otherwise destroy its
             // owned application. Restore only our own HWNDs, before destruction.
             try {
-                if(A!=null && !A.IsDisposed && GetWindow(A.Handle,GW_OWNER)==ProxyA.Handle)
+                if(A!=null && !A.IsDisposed && ProxyA!=null &&
+                   GetWindow(A.Handle,GW_OWNER)==ProxyA.Handle)
                     SetOwner(A.Handle,IntPtr.Zero);
-                if(B!=null && !B.IsDisposed && GetWindow(B.Handle,GW_OWNER)==ProxyB.Handle)
+                if(B!=null && !B.IsDisposed && ProxyB!=null &&
+                   GetWindow(B.Handle,GW_OWNER)==ProxyB.Handle)
                     SetOwner(B.Handle,IntPtr.Zero);
-                if(GetWindow(ProxyA.Handle,GW_OWNER)==Host.Handle)
+                if(Host!=null && ProxyA!=null &&
+                   GetWindow(ProxyA.Handle,GW_OWNER)==Host.Handle)
                     SetOwner(ProxyA.Handle,IntPtr.Zero);
-                if(GetWindow(ProxyB.Handle,GW_OWNER)==Host.Handle)
+                if(Host!=null && ProxyB!=null &&
+                   GetWindow(ProxyB.Handle,GW_OWNER)==Host.Handle)
                     SetOwner(ProxyB.Handle,IntPtr.Zero);
             } finally {
                 if(Taskbar!=null) {
                     try { if(aRegistered) Taskbar.UnregisterTab(ProxyA.Handle); } catch(Exception) {}
                     try { if(bRegistered) Taskbar.UnregisterTab(ProxyB.Handle); } catch(Exception) {}
                     try { if(hostAdded) Taskbar.DeleteTab(Host.Handle); } catch(Exception) {}
-                    Marshal.FinalReleaseComObject(Taskbar);
+                    try { Marshal.FinalReleaseComObject(Taskbar); }
+                    catch(Exception) { }
                     Taskbar=null;
                 }
                 // WinForms must relinquish its windows before the proxy HWNDs.
                 if(A!=null) A.Dispose();
                 if(B!=null) B.Dispose();
                 if(Anchor!=null) Anchor.Dispose();
-                ProxyA.Dispose(); ProxyB.Dispose(); Host.Dispose();
+                if(ProxyA!=null) ProxyA.Dispose();
+                if(ProxyB!=null) ProxyB.Dispose();
+                if(Host!=null) Host.Dispose();
                 Application.DoEvents();
             }
         }
@@ -224,6 +239,16 @@ sealed class ShellTopologyMatrix
     static void SetOwner(IntPtr window, IntPtr owner)
     {
         Check(IsWindow(window) && (owner==IntPtr.Zero || IsWindow(owner)), "Invalid fixture owner HWND");
+        uint windowPid;
+        GetWindowThreadProcessId(window,out windowPid);
+        Check(windowPid==(uint)Process.GetCurrentProcess().Id,
+              "Refusing to change native owner of an external window");
+        if(owner!=IntPtr.Zero) {
+            uint ownerPid;
+            GetWindowThreadProcessId(owner,out ownerPid);
+            Check(ownerPid==windowPid,
+                  "Refusing to assign an owner outside this fixture process");
+        }
         SetWindowLongPtr(window,GWL_HWNDPARENT,owner);
         Check(GetWindow(window,GW_OWNER)==owner,"SetWindowLongPtr owner did not take effect");
     }
@@ -244,10 +269,14 @@ sealed class ShellTopologyMatrix
     {
         if(hwnd==IntPtr.Zero || !IsWindow(hwnd)) return new {hwnd=hwnd.ToInt64(), exists=false};
         uint pid; GetWindowThreadProcessId(hwnd,out pid);
+        uint explorerPid=0;
+        var taskbar=FindWindow("Shell_TrayWnd",null);
+        if(taskbar!=IntPtr.Zero) GetWindowThreadProcessId(taskbar,out explorerPid);
         var cls=new StringBuilder(256); GetClassName(hwnd,cls,cls.Capacity);
         var root=RootOwner(hwnd);
         return new {
             hwnd=hwnd.ToInt64(), exists=true, pid, windowClass=cls.ToString(),
+            isShellExplorer=explorerPid!=0 && pid==explorerPid,
             visible=IsWindowVisible(hwnd), minimized=IsIconic(hwnd),
             owner=GetWindow(hwnd,GW_OWNER).ToInt64(),
             rootOwner=root.ToInt64(), lastActivePopup=GetLastActivePopup(root).ToInt64()
