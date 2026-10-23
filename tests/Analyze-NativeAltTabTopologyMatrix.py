@@ -72,6 +72,7 @@ def analyze(records):
     run_started = False
     run_finished = False
     run_failed = None
+    declared_switches = None
 
     for index, record in enumerate(records):
         stage = record["stage"]
@@ -80,6 +81,12 @@ def analyze(records):
         if stage == "run-start":
             if run_started:
                 raise ValueError("Duplicate run-start event")
+            declared_switches = data.get("switchesPerCell")
+            if (not isinstance(declared_switches, int) or
+                isinstance(declared_switches, bool) or
+                declared_switches < 2 or declared_switches > 20 or
+                declared_switches % 2 != 0):
+                raise ValueError("Invalid declared switchesPerCell")
             run_started = True
             continue
         if stage == "run-complete":
@@ -174,12 +181,18 @@ def analyze(records):
                 "observed": snapshot(window),
                 "reportedMismatch": bool(s["mismatch"] is not None),
             })
-        # Mark completely unobserved cells as NOT RUN, never "0 failures".
+        # A plan-complete marker is insufficient: every declared switch
+        # needs an actual start, a verified return and a valid late sample.
+        # An aborted/partial recording must never appear fully covered.
+        steps_match_plan = (
+            sorted(steps) == list(range(1, declared_switches + 1))
+        )
         case["status"] = (
             "not-run" if not case["topologyVerified"]
-            else "completed" if case["cellComplete"] and
-                case["attempted"] == case["passed"] and
-                case["attempted"] == case["lateSamples"] and
+            else "completed" if case["cellComplete"] and steps_match_plan and
+                case["attempted"] == declared_switches and
+                case["passed"] == declared_switches and
+                case["lateSamples"] == declared_switches and
                 case["incompleteAttempts"] == 0
             else "incomplete"
         )
@@ -191,6 +204,7 @@ def analyze(records):
             all(cases[x]["status"] == "completed" for x, _, _ in FACTORS)
         ),
         "failureReason": run_failed,
+        "expectedSwitchesPerCell": declared_switches,
         "cells": cases,
     }
 
