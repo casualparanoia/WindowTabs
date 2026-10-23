@@ -61,9 +61,21 @@ def correlation(passive, internal=None, minimum_seconds=0.65):
     internal_release_times = [r['_time'] for r in internal_releases]
     internal_late = [r for r in internal if r['stage'] == 'sample-800ms']
     internal_late_times = [r['_time'] for r in internal_late]
-    internal_actions = [r for r in internal if r['stage'] in (
+    # Include only the opt-in shell/proxy handoff stages; source-side preview
+    # requests, temporary owner detach, later rechain and active-tab shell
+    # notifications must be visible next to foreground callback events.
+    handoff_stages = {
         'group-reassert-foreground', 'group-raise-owned-window',
-        'group-stale-foreground-ignored', 'taskbar-proxy-activation')]
+        'group-stale-foreground-ignored', 'taskbar-proxy-activation',
+        'taskbar-dwm-preview-request', 'taskbar-preview-release',
+        'taskbar-preview-owner-before', 'taskbar-preview-owner-after',
+        'taskbar-preview-rechain-before', 'taskbar-preview-rechain-after',
+        'taskbar-preview-unregister', 'taskbar-preview-register-before',
+        'taskbar-preview-register-after', 'taskbar-active-before',
+        'taskbar-active-after', 'taskbar-app-adopt-before',
+        'taskbar-app-adopt-after',
+    }
+    internal_actions = [r for r in internal if r['stage'] in handoff_stages]
     internal_action_times = [r['_time'] for r in internal_actions]
     if internal:
         overlap = min(passive[-1]['_time'], internal[-1]['_time']) - max(
