@@ -68,6 +68,12 @@ sealed class ShellTopologyMatrix
     static extern IntPtr FindWindow(string className, string windowName);
     [DllImport("user32.dll", SetLastError=true)]
     static extern uint SendInput(uint count, INPUT[] inputs, int size);
+    delegate void ForegroundCallback(IntPtr hook, uint evt, IntPtr hwnd,
+                                     int objectId, int childId, uint tid, uint millis);
+    [DllImport("user32.dll", SetLastError=true)]
+    static extern IntPtr SetWinEventHook(uint evtMin, uint evtMax, IntPtr module,
+                                         ForegroundCallback callback, uint pid, uint tid, uint flags);
+    [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hook);
 
     // x64 INPUT layout: DWORD type at 0, 4 bytes padding, union starts at 8.
     // INPUT is 40 bytes (union is 32 bytes); KEYBDINPUT itself is 24 bytes.
@@ -253,6 +259,16 @@ sealed class ShellTopologyMatrix
     static readonly JavaScriptSerializer Json=new JavaScriptSerializer();
     static volatile bool StopRequested;
     static string Scenario="startup";
+    // Keep delegate rooted for the entire installation. Out-of-context;
+    // never instruct Windows to change foreground.
+    static readonly ForegroundCallback OnForeground = ForegroundEvent;
+    static void ForegroundEvent(IntPtr hook, uint evt, IntPtr hwnd, int objectId,
+                                int childId, uint tid, uint millis)
+    {
+        if (objectId==0 && childId==0 && hwnd!=IntPtr.Zero)
+            Record("foreground-event",new {notified=Window(hwnd),
+                                          actualAtCallback=GetForegroundWindow().ToInt64()});
+    }
     static void Record(string stage, object data)
     {
         var row=new {utc=DateTime.UtcNow.ToString("o"), elapsedMs=Clock.ElapsedMilliseconds,
@@ -293,17 +309,20 @@ sealed class ShellTopologyMatrix
 
     static void Chord()
     {
-        bool altDown=false;
+        bool altDown=false, tabDown=false;
         try
         {
             Key(VK_MENU,false); altDown=true;
-            Key(VK_TAB,false);
-            Key(VK_TAB,true);
+            Key(VK_TAB,false); tabDown=true;
+            Key(VK_TAB,true); tabDown=false;
             Pump(35); // same short hold as prior quick-MRU control, not a latency guarantee
         }
         finally
         {
-            if(altDown) Key(VK_MENU,true);
+            // Best effort to avoid leaving injected modifiers/Tab held after
+            // a cancelled or failed pulse.
+            if(tabDown) { try { Key(VK_TAB,true); } catch(Exception) {} }
+            if(altDown) { try { Key(VK_MENU,true); } catch(Exception) {} }
         }
     }
 
@@ -411,9 +430,11 @@ sealed class ShellTopologyMatrix
             Console.CancelKeyPress += (sender,e) => {e.Cancel=true; StopRequested=true;};
             using(Writer=new StreamWriter(output,false,new UTF8Encoding(false)))
             {
-                Record("run-start",new {switchesPerCell=switches,
-                    session=Process.GetCurrentProcess().SessionId});
+                var foregroundHook=SetWinEventHook(3,3,IntPtr.Zero,OnForeground,0,0,0);
+                Check(foregroundHook!=IntPtr.Zero,"Could not install passive foreground WinEvent hook");
                 try {
+                    Record("run-start",new {switchesPerCell=switches,
+                        session=Process.GetCurrentProcess().SessionId});
                     for(int i=0;i<4;i++)
                     {
                         Preflight();
@@ -434,6 +455,7 @@ sealed class ShellTopologyMatrix
                     Record("run-failed",new {type=e.GetType().Name,reason=e.Message});
                     throw;
                 }
+                finally { UnhookWinEvent(foregroundHook); }
             }
             return 0;
         }
