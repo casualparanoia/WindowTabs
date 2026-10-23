@@ -113,7 +113,7 @@ sealed class ShellTopologyMatrix
         {
             Register = register; Own = own;
             Name = "register-" + (register ? "on" : "off") + "_owner-" + (own ? "on" : "off");
-            var left=workingArea.Left, top=workingArea.Top;
+            int left=workingArea.Left, top=workingArea.Top;
             var hostBounds = new Rectangle(left+60,top+120,580,390);
             Host = new TransparentProxy(hostBounds,true);
             ProxyA = new TransparentProxy(hostBounds,false);
