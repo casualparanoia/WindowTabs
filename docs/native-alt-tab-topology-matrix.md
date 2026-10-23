@@ -101,3 +101,46 @@ specific hypothesis derived from the existing traces.
 Registration reports taskbar thumbnail grouping, not application activation.
 Owner relationships affect stacking, minimizing, and destruction; they must
 be restored before any experimental proxy teardown.
+
+## Offline result interpretation
+
+The fixture's output is deliberately not a binary "Explorer bug yes/no" verdict.
+To classify an existing private recording without running WindowTabs or sending
+any input:
+
+~~~powershell
+py -3 .\tests\Analyze-NativeAltTabTopologyMatrix.py '.\tests\Debug\topology-matrix-<id>\topology-trace.jsonl'
+~~~
+
+The standard-library analyzer returns one cell for each registration/ownership
+factor combination. For each, it reports whether that cell actually ran,
+whether its fixture switches completed, which +900 ms samples were observed,
+and the number of **candidate** persistent hidden Explorer hosts versus other
+unexpected foreground HWNDs. All four cells must have both their topology
+event and completed switch observations to be marked complete. Missing steps,
+missing late samples, aborted runs and unexecuted scenarios do **not** become
+zero-failure results.
+
+A persistent hidden Explorer candidate requires an observed foreground window
+that is invisible, has class XamlExplorerHostIslandWindow, and has a PID
+matching the live Explorer taskbar process **at the time it was observed**.
+The late sample is measured at 900 ms nominal after the injected Alt release,
+not at the initial shell callback. A transient Explorer callback at +120 ms,
+or a foreign process with the same window class, is explicitly not counted as
+this candidate. The analyzer does not establish user-selected tile, visual
+stacking, or causality.
+
+~~~powershell
+py -3 .\tests\test_analyze_native_alt_tab_topology_matrix.py
+~~~
+
+The synthetic unit tests check successful four-cell reports, persistent
+Explorer, transient Explorer, foreign PID, wrong-application foreground,
+incomplete data, unrun cells, failed runs, and invalid trace structure. CI
+runs these tests but never runs the fixture interactively.
+
+**Interpretation:** A difference between cells would motivate further
+controlled investigation, **not** a claim that one factor caused the actual
+WindowTabs defect. The synthetic proxy windows are not DWM bitmap producers,
+and all forms run within one process; neither fact reproduces the app/proxy
+cross-process ownership topology of the normal WindowTabs user session.
